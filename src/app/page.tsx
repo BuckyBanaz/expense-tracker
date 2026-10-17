@@ -24,6 +24,7 @@ import { CreateCategoryModal } from '@/components/apple/CreateCategoryModal';
 import { BudgetModal } from '@/components/BudgetModal';
 import { SupabaseConfigModal } from '@/components/SupabaseConfigModal';
 import { AuthModal } from '@/components/AuthModal';
+import { SecureWipeModal } from '@/components/apple/SecureWipeModal';
 import { 
   fetchExpensesFromDb, 
   addExpenseToDb, 
@@ -293,20 +294,6 @@ export default function Home() {
               <Lock className="w-3.5 h-3.5" />
             </button>
 
-            {/* Supabase status button */}
-            <button
-              onClick={() => setIsSupabaseModalOpen(true)}
-              className={`flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full border transition-all ${
-                isSupabaseLive
-                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                  : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
-              }`}
-              title="Supabase Database Settings"
-            >
-              <Database className="w-3 h-3" />
-              <span>{isSupabaseLive ? 'Cloud' : 'Clean'}</span>
-            </button>
-
             {/* Theme Toggle */}
             <button
               onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -524,42 +511,14 @@ export default function Home() {
         theme={theme}
       />
 
-      {/* Apple Styled Wipe Data Confirmation Sheet */}
-      {isWipeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className={`w-full max-w-sm rounded-3xl p-6 border shadow-2xl text-center transition-all ${
-            isDark ? 'bg-[#1c1c1e] border-white/10 text-white' : 'bg-white border-slate-200/90 text-slate-900'
-          }`}>
-            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto mb-3">
-              <Trash2 className="w-6 h-6 stroke-[2]" />
-            </div>
-            <h3 className="text-base font-extrabold tracking-tight font-sans">Wipe All Data?</h3>
-            <p className="text-xs text-slate-400 mt-1 mb-5 leading-relaxed">
-              This will permanently delete all your expenses, budgets, and balance records. Your app will return to a clean zero state.
-            </p>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setIsWipeModalOpen(false)}
-                className={`py-2.5 rounded-xl text-xs font-bold border transition-colors ${
-                  isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isWiping}
-                onClick={handleExecuteWipe}
-                className="py-2.5 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 active:scale-95 transition-all shadow-sm"
-              >
-                {isWiping ? 'Wiping...' : 'Yes, Wipe Everything'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 3-Step Protected Wipe Data Modal (Confirm -> PIN Auth -> Final WIPE confirmation) */}
+      <SecureWipeModal
+        isOpen={isWipeModalOpen}
+        onClose={() => setIsWipeModalOpen(false)}
+        onConfirmWipe={handleExecuteWipe}
+        currentPin={savedPin}
+        theme={theme}
+      />
 
     </div>
   );
