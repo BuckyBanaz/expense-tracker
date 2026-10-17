@@ -176,9 +176,10 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
     });
 
     const total = periodFiltered.expense || 1;
+    const allCats = getAllCategories();
     return Object.entries(catMap)
       .map(([name, amount]) => {
-        const catMeta = CATEGORIES.find((c) => c.name === name);
+        const catMeta = allCats.find((c) => c.name.toLowerCase() === name.toLowerCase());
         const percent = Math.round((amount / total) * 100);
         return {
           name,
