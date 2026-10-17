@@ -17,7 +17,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   theme = 'light',
   onPinChanged,
 }) => {
-  const [activePin, setActivePin] = useState(savedPin || '2004');
+  const [activePin, setActivePin] = useState(savedPin);
   const [enteredPin, setEnteredPin] = useState('');
   const [isError, setIsError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -31,7 +31,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   const isDark = theme === 'dark';
 
   useEffect(() => {
-    setActivePin(savedPin || '2004');
+    setActivePin(savedPin);
   }, [savedPin]);
 
   // Sync latest PIN directly from Supabase cloud on load
@@ -54,7 +54,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
     setErrorMessage('');
 
     if (newPin.length === 4) {
-      if (newPin === activePin || newPin === savedPin || newPin === '2004') {
+      if (newPin === activePin || newPin === savedPin) {
         setTimeout(() => {
           onUnlock();
         }, 150);

@@ -56,8 +56,8 @@ export function getActiveSupabaseCredentials(): { url: string; key: string } {
     }
   }
   return {
-    url: 'https://fmwppzwuotupebtdiszv.supabase.co',
-    key: 'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd',
+    url: DEFAULT_SUPABASE_URL,
+    key: DEFAULT_SUPABASE_ANON_KEY,
   };
 }
 

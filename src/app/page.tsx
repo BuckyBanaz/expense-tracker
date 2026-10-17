@@ -55,7 +55,7 @@ export default function Home() {
 
   // Security / PIN lock state
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [savedPin, setSavedPin] = useState('2004');
+  const [savedPin, setSavedPin] = useState('1234');
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
 
   // Database state: Strictly Clean, zero mock data
@@ -76,7 +76,7 @@ export default function Home() {
     setCurrentMonth(new Date().toISOString().slice(0, 7));
     // Load saved PIN locally first for immediate response
     if (typeof window !== 'undefined') {
-      const pin = localStorage.getItem('spendwise_app_pin') || '2004';
+      const pin = localStorage.getItem('spendwise_app_pin') || '1234';
       setSavedPin(pin);
     }
     // Fetch and sync active PIN from Supabase cloud
