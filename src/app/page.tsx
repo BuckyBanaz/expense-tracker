@@ -33,6 +33,8 @@ import {
   upsertBudgetInDb,
   isSupabaseConfigured,
   getSupabase,
+  getActiveSupabaseCredentials,
+  getLastSyncError,
   clearAllData,
   fetchAppPinFromDb,
   saveAppPinToDb,
@@ -53,7 +55,7 @@ export default function Home() {
 
   // Security / PIN lock state
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [savedPin, setSavedPin] = useState('1234');
+  const [savedPin, setSavedPin] = useState('2004');
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
 
   // Database state: Strictly Clean, zero mock data
@@ -61,6 +63,7 @@ export default function Home() {
   const [budgets, setBudgets] = useState<CategoryBudget[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [isSupabaseLive, setIsSupabaseLive] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState('');
 
   // Modals state
@@ -73,7 +76,7 @@ export default function Home() {
     setCurrentMonth(new Date().toISOString().slice(0, 7));
     // Load saved PIN locally first for immediate response
     if (typeof window !== 'undefined') {
-      const pin = localStorage.getItem('spendwise_app_pin') || '1234';
+      const pin = localStorage.getItem('spendwise_app_pin') || '2004';
       setSavedPin(pin);
     }
     // Fetch and sync active PIN from Supabase cloud
@@ -109,14 +112,11 @@ export default function Home() {
   // Load clean real data
   const loadData = useCallback(async () => {
     try {
-      const configured = isSupabaseConfigured();
-      setIsSupabaseLive(configured);
-
       const expResult = await fetchExpensesFromDb(user);
       setExpenses(expResult.data || []);
-      if (expResult.isSupabase) {
-        setIsSupabaseLive(true);
-      }
+      // Only report "Connected" when data actually came from the cloud
+      setIsSupabaseLive(expResult.isSupabase && !expResult.error);
+      setSyncError(getLastSyncError());
 
       const m = currentMonth || new Date().toISOString().slice(0, 7);
       const budgetsData = await fetchBudgetsFromDb(m, user);
@@ -159,6 +159,7 @@ export default function Home() {
   const handleSaveTransaction = async (data: Omit<ExpenseItem, 'id'>) => {
     const created = await addExpenseToDb(data, user);
     setExpenses((prev) => [created, ...prev]);
+    setSyncError(getLastSyncError());
   };
 
   // Delete Transaction
@@ -329,6 +330,16 @@ export default function Home() {
 
         {/* Scrollable Main Screen Content */}
         <main className="flex-1 w-full px-4 pt-3 pb-24 overflow-y-auto no-scrollbar">
+          {syncError && (
+            <div className="mb-3 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold break-words">
+              <div>⚠️ Cloud sync not working — data is saved on this device only.</div>
+              <div className="mt-1 font-mono font-normal">{syncError}</div>
+              <div className="mt-1 font-mono font-normal opacity-80">
+                db: {getActiveSupabaseCredentials().url.replace('https://', '')} · user: {user?.email || 'not signed in'}
+              </div>
+              <button onClick={loadData} className="mt-2 underline">Retry sync</button>
+            </div>
+          )}
           {activeTab === 'insights' && (
             <InsightsView
               expenses={expenses}

@@ -1,14 +1,20 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { ExpenseItem, CategoryBudget } from '@/types/expense';
 
+const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const DEFAULT_SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  'https://fmwppzwuotupebtdiszv.supabase.co';
+  (envUrl && envUrl.startsWith('https://') && !envUrl.startsWith('sb_'))
+    ? envUrl
+    : 'https://fmwppzwuotupebtdiszv.supabase.co';
 
-const DEFAULT_SUPABASE_ANON_KEY =
+const envKey = (
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd';
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+)?.trim();
+const DEFAULT_SUPABASE_ANON_KEY =
+  (envKey && (envKey.startsWith('sb_') || envKey.startsWith('eyJ')))
+    ? envKey
+    : 'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd';
 
 const STORAGE_KEY_URL = 'expensee_supabase_url';
 const STORAGE_KEY_KEY = 'expensee_supabase_key';
@@ -22,6 +28,18 @@ export const INITIAL_DEMO_BUDGETS: CategoryBudget[] = [];
 let cachedClient: SupabaseClient | null = null;
 let currentConfigString = '';
 
+// Last cloud sync failure, surfaced in the UI so local-only fallbacks are never silent
+let lastSyncError: string | null = null;
+
+export function getLastSyncError(): string | null {
+  return lastSyncError;
+}
+
+function setSyncError(context: string, message?: string | null) {
+  lastSyncError = `${context}: ${message || 'unknown error'}`;
+  console.warn(lastSyncError);
+}
+
 export function getActiveSupabaseCredentials(): { url: string; key: string } {
   if (typeof window !== 'undefined') {
     const customUrl = localStorage.getItem(STORAGE_KEY_URL)?.trim();
@@ -31,14 +49,15 @@ export function getActiveSupabaseCredentials(): { url: string; key: string } {
       customKey &&
       customUrl.startsWith('https://') &&
       !customUrl.includes('your-project-id') &&
+      !customUrl.startsWith('sb_') &&
       customKey.length > 20
     ) {
       return { url: customUrl, key: customKey };
     }
   }
   return {
-    url: (DEFAULT_SUPABASE_URL || '').trim(),
-    key: (DEFAULT_SUPABASE_ANON_KEY || '').trim(),
+    url: 'https://fmwppzwuotupebtdiszv.supabase.co',
+    key: 'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd',
   };
 }
 
@@ -149,7 +168,8 @@ const isUUID = (str: string) =>
 export async function fetchExpensesFromDb(user?: User | null): Promise<{ data: ExpenseItem[]; isSupabase: boolean; error?: string }> {
   const client = getSupabase();
   if (!client || !isSupabaseConfigured()) {
-    return { data: getLocalExpenses(), isSupabase: false };
+    setSyncError('Supabase not configured', `invalid URL "${getActiveSupabaseCredentials().url.slice(0, 20)}"`);
+    return { data: getLocalExpenses(), isSupabase: false, error: lastSyncError ?? undefined };
   }
 
   try {
@@ -164,7 +184,7 @@ export async function fetchExpensesFromDb(user?: User | null): Promise<{ data: E
 
     const { data, error } = await query;
     if (error) {
-      console.warn('Supabase fetch failed, falling back to clean local storage:', error.message);
+      setSyncError('Fetch failed', error.message);
       return { data: getLocalExpenses(), isSupabase: false, error: error.message };
     }
 
@@ -213,17 +233,20 @@ export async function fetchExpensesFromDb(user?: User | null): Promise<{ data: E
         if (!insertErr && inserted) {
           supabaseExpenses = [...(inserted as ExpenseItem[]), ...supabaseExpenses];
         } else if (insertErr) {
-          console.warn('Auto-migration insert error:', insertErr.message);
+          setSyncError('Upload of local items failed', insertErr.message);
+          // Don't overwrite the local cache, or the unsynced items would be lost
+          return { data: [...unsynced, ...supabaseExpenses], isSupabase: true, error: insertErr.message };
         }
       }
     }
 
     // Keep local cache perfectly synced with Supabase for fast load and offline resilience
     saveLocalExpenses(supabaseExpenses);
+    lastSyncError = null;
 
     return { data: supabaseExpenses, isSupabase: true };
   } catch (err: any) {
-    console.warn('Error querying Supabase:', err);
+    setSyncError('Fetch failed', err?.message);
     return { data: getLocalExpenses(), isSupabase: false, error: err?.message };
   }
 }
@@ -261,9 +284,9 @@ export async function addExpenseToDb(item: Omit<ExpenseItem, 'id'>, user?: User 
         saveLocalExpenses([saved, ...current.filter((x) => x.id !== saved.id)]);
         return saved;
       }
-      console.warn('Supabase insert failed, saving locally:', error?.message);
-    } catch (e) {
-      console.warn('Supabase error inserting:', e);
+      setSyncError('Save failed (kept on this device only)', error?.message);
+    } catch (e: any) {
+      setSyncError('Save failed (kept on this device only)', e?.message);
     }
   }
 
@@ -474,7 +497,9 @@ export async function fetchAppPinFromDb(): Promise<string> {
       .eq('month', '9999-12')
       .limit(1);
 
-    if (!error && data && data.length > 0) {
+    if (error) {
+      setSyncError('PIN fetch failed', error.message);
+    } else if (data && data.length > 0) {
       const pinNum = Math.floor(Number(data[0].monthly_limit));
       const pinVal = String(pinNum).padStart(4, '0');
       if (typeof window !== 'undefined') {
@@ -501,27 +526,33 @@ export async function saveAppPinToDb(newPin: string): Promise<boolean> {
     const pinNum = parseInt(newPin, 10);
     if (isNaN(pinNum)) return false;
 
-    const { data } = await client
+    const { data, error: selectErr } = await client
       .from('budgets')
       .select('id')
       .eq('category', '__APP_PIN__')
       .eq('month', '9999-12')
       .limit(1);
+    if (selectErr) {
+      setSyncError('PIN save failed', selectErr.message);
+      return false;
+    }
 
-    if (data && data.length > 0) {
-      await client
-        .from('budgets')
-        .update({ monthly_limit: pinNum })
-        .eq('id', data[0].id);
-    } else {
-      await client
-        .from('budgets')
-        .insert([{
-          category: '__APP_PIN__',
-          monthly_limit: pinNum,
-          month: '9999-12',
-          user_id: null,
-        }]);
+    const { error: writeErr } = data && data.length > 0
+      ? await client
+          .from('budgets')
+          .update({ monthly_limit: pinNum })
+          .eq('id', data[0].id)
+      : await client
+          .from('budgets')
+          .insert([{
+            category: '__APP_PIN__',
+            monthly_limit: pinNum,
+            month: '9999-12',
+            user_id: null,
+          }]);
+    if (writeErr) {
+      setSyncError('PIN save failed', writeErr.message);
+      return false;
     }
     return true;
   } catch (e) {
