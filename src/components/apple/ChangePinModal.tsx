@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, KeyRound, Eye, EyeOff, RotateCcw, ShieldCheck, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { saveAppPinToDb } from '@/lib/supabaseClient';
 
 interface ChangePinModalProps {
   isOpen: boolean;
@@ -86,7 +87,8 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
       return;
     }
 
-    // Persist immediately to localStorage and notify parent
+    // Persist immediately to cloud and localStorage
+    saveAppPinToDb(newPin);
     if (typeof window !== 'undefined') {
       localStorage.setItem('spendwise_app_pin', newPin);
     }
@@ -113,6 +115,7 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
   const handleQuickResetTo1234 = () => {
     const input = prompt('Enter recovery password (momdad143) to reset PIN to 1234:');
     if (input && input.trim().toLowerCase() === 'momdad143') {
+      saveAppPinToDb('1234');
       if (typeof window !== 'undefined') {
         localStorage.setItem('spendwise_app_pin', '1234');
       }

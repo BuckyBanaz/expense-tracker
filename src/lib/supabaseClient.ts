@@ -451,9 +451,82 @@ export async function clearAllData(): Promise<void> {
       console.warn('Could not clear Supabase expenses:', e);
     }
     try {
-      await client.from('budgets').delete().neq('month', '__never__');
+      await client.from('budgets').delete().neq('category', '__APP_PIN__');
     } catch (e) {
       console.warn('Could not clear Supabase budgets:', e);
     }
   }
 }
+
+// ---------------- CLOUD APP CONFIG / PIN API ----------------
+export async function fetchAppPinFromDb(): Promise<string> {
+  const localPin = typeof window !== 'undefined' ? localStorage.getItem('spendwise_app_pin') || '1234' : '1234';
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return localPin;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('budgets')
+      .select('monthly_limit')
+      .eq('category', '__APP_PIN__')
+      .eq('month', '9999-12')
+      .limit(1);
+
+    if (!error && data && data.length > 0) {
+      const pinNum = Math.floor(Number(data[0].monthly_limit));
+      const pinVal = String(pinNum).padStart(4, '0');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('spendwise_app_pin', pinVal);
+      }
+      return pinVal;
+    }
+  } catch (e) {
+    console.warn('Could not fetch PIN from Supabase:', e);
+  }
+  return localPin;
+}
+
+export async function saveAppPinToDb(newPin: string): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('spendwise_app_pin', newPin);
+  }
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return true;
+  }
+
+  try {
+    const pinNum = parseInt(newPin, 10);
+    if (isNaN(pinNum)) return false;
+
+    const { data } = await client
+      .from('budgets')
+      .select('id')
+      .eq('category', '__APP_PIN__')
+      .eq('month', '9999-12')
+      .limit(1);
+
+    if (data && data.length > 0) {
+      await client
+        .from('budgets')
+        .update({ monthly_limit: pinNum })
+        .eq('id', data[0].id);
+    } else {
+      await client
+        .from('budgets')
+        .insert([{
+          category: '__APP_PIN__',
+          monthly_limit: pinNum,
+          month: '9999-12',
+          user_id: null,
+        }]);
+    }
+    return true;
+  } catch (e) {
+    console.warn('Could not save PIN to Supabase:', e);
+    return false;
+  }
+}
+

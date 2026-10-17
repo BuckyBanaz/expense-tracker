@@ -34,6 +34,8 @@ import {
   isSupabaseConfigured,
   getSupabase,
   clearAllData,
+  fetchAppPinFromDb,
+  saveAppPinToDb,
 } from '@/lib/supabaseClient';
 import { ExpenseItem, CategoryBudget } from '@/types/expense';
 import { formatCurrency } from '@/lib/currencies';
@@ -69,11 +71,15 @@ export default function Home() {
 
   useEffect(() => {
     setCurrentMonth(new Date().toISOString().slice(0, 7));
-    // Load saved PIN
+    // Load saved PIN locally first for immediate response
     if (typeof window !== 'undefined') {
       const pin = localStorage.getItem('spendwise_app_pin') || '1234';
       setSavedPin(pin);
     }
+    // Fetch and sync active PIN from Supabase cloud
+    fetchAppPinFromDb().then((cloudPin) => {
+      if (cloudPin) setSavedPin(cloudPin);
+    });
   }, []);
 
   // Sync theme
@@ -181,6 +187,7 @@ export default function Home() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('spendwise_app_pin', newPin);
     }
+    saveAppPinToDb(newPin);
   };
 
   // Export CSV
