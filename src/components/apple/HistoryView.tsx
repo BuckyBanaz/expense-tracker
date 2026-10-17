@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, ArrowUpRight, ArrowDownRight, Trash2, Calendar, CreditCard, Receipt } from 'lucide-react';
+import { Search, ArrowUpRight, ArrowDownRight, Calendar, CreditCard, Receipt } from 'lucide-react';
 import { ExpenseItem } from '@/types/expense';
-import { getAllCategories, formatCurrency } from '@/lib/currencies';
-import { CategoryIcon } from './CategoryIcon';
+import { formatCurrency } from '@/lib/currencies';
+import { TransactionRow, formatDayLabel } from './TransactionRow';
 
 interface HistoryViewProps {
   expenses: ExpenseItem[];
@@ -22,7 +22,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
 
@@ -64,6 +63,17 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       return 0;
     });
   }, [expenses, filterType, methodFilter, search]);
+
+  // Consecutive runs of the same date (list is already sorted newest first)
+  const groupedByDay = useMemo(() => {
+    const groups: [string, ExpenseItem[]][] = [];
+    for (const item of filtered) {
+      const last = groups[groups.length - 1];
+      if (last && last[0] === item.date) last[1].push(item);
+      else groups.push([item.date, [item]]);
+    }
+    return groups;
+  }, [filtered]);
 
   return (
     <div className={`w-full pb-28 px-0 select-none transition-colors ${
@@ -137,100 +147,49 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         ))}
       </div>
 
-      {/* List */}
-      <div className={`rounded-2xl divide-y overflow-hidden border ${
-        isDark ? 'bg-[#1c1c1e] divide-white/5 border-white/5' : 'bg-white divide-slate-100 border-slate-200/80 shadow-sm'
-      }`}>
-        {filtered.length > 0 ? (
-          filtered.map((item) => {
-            const isIncome = item.type === 'income';
-            const allCats = getAllCategories();
-            const catMeta = allCats.find((c) => c.name.toLowerCase() === item.category.toLowerCase());
-
-            return (
-              <div
-                key={item.id}
-                className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-white shadow-xs"
-                    style={{ backgroundColor: catMeta?.color || (isIncome ? '#34c759' : '#64748b') }}
-                  >
-                    <CategoryIcon name={catMeta?.icon || item.category} className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="text-sm font-bold truncate">{item.title}</h4>
-                    
-                    {/* Payee + Method + Category + Date */}
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5 truncate">
-                      {item.payee && (
-                        <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">
-                          {isIncome ? `From: ${item.payee}` : `To: ${item.payee}`} &bull;
-                        </span>
-                      )}
-                      <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-white/10 text-[10px] font-bold text-slate-700 dark:text-slate-300">
-                        {item.payment_method || 'UPI'}
-                      </span>
-                      <span>&bull;</span>
-                      <span>{item.category}</span>
-                      <span>&bull;</span>
-                      <span>{item.date}</span>
-                    </div>
-
-                    {item.notes && (
-                      <p className="text-[10px] text-slate-400 italic mt-0.5 truncate">
-                        &quot;{item.notes}&quot;
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2.5 shrink-0">
-                  <span className={`text-sm font-extrabold ${
-                    isIncome ? 'text-[#34c759]' : isDark ? 'text-white' : 'text-slate-900'
-                  }`}>
-                    {isIncome ? '+' : '-'} {formatCurrency(item.amount, currency)}
-                  </span>
-
-                  {confirmDeleteId === item.id ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          onDelete(item.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        className="text-[10px] bg-red-600 text-white font-bold px-2 py-1 rounded-md"
-                      >
-                        Delete
-                      </button>
-                      <button
-                        onClick={() => setConfirmDeleteId(null)}
-                        className="text-[10px] text-slate-400 px-1"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmDeleteId(item.id)}
-                      className="text-slate-400 hover:text-red-500 p-1 transition-colors"
-                      title="Delete entry"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
+      {/* List, grouped by day */}
+      {filtered.length > 0 ? (
+        <div className="space-y-5">
+          {groupedByDay.map(([date, items]) => {
+            const net = items.reduce(
+              (sum, e) => sum + (e.type === 'income' ? 1 : -1) * Number(e.amount || 0),
+              0
             );
-          })
-        ) : (
-          <div className="py-12 text-center flex flex-col items-center justify-center">
-            <Receipt className="w-8 h-8 text-slate-400 mb-2 stroke-[1.5]" />
-            <span className="text-xs font-semibold text-slate-400">No transactions recorded yet</span>
-          </div>
-        )}
-      </div>
+            return (
+              <section key={date}>
+                <div className="flex items-baseline justify-between px-1 mb-1.5">
+                  <h3 className={`text-[13px] font-semibold ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                    {formatDayLabel(date)}
+                  </h3>
+                  <span className="text-xs font-medium tabular-nums text-slate-400">
+                    {net >= 0 ? '+' : '−'}{formatCurrency(Math.abs(net), currency)}
+                  </span>
+                </div>
+                <div className={`rounded-2xl divide-y overflow-hidden border ${
+                  isDark ? 'bg-[#1c1c1e] divide-white/5 border-white/5' : 'bg-white divide-slate-100 border-slate-200/80 shadow-sm'
+                }`}>
+                  {items.map((item) => (
+                    <TransactionRow
+                      key={item.id}
+                      item={item}
+                      currency={currency}
+                      isDark={isDark}
+                      onDelete={onDelete}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className={`rounded-2xl border py-12 text-center flex flex-col items-center justify-center ${
+          isDark ? 'bg-[#1c1c1e] border-white/5' : 'bg-white border-slate-200/80 shadow-sm'
+        }`}>
+          <Receipt className="w-8 h-8 text-slate-400 mb-2 stroke-[1.5]" />
+          <span className="text-xs font-semibold text-slate-400">No transactions recorded yet</span>
+        </div>
+      )}
 
     </div>
   );

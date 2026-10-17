@@ -69,9 +69,20 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
     }
   };
 
+  // Older data can hold duplicate rows for one category; show only the newest
+  const uniqueBudgets = useMemo(() => {
+    const byCategory = new Map<string, CategoryBudget>();
+    for (const b of budgets) {
+      const key = `${b.category.toLowerCase()}|${b.month}`;
+      const prev = byCategory.get(key);
+      if (!prev || (b.created_at || '') >= (prev.created_at || '')) byCategory.set(key, b);
+    }
+    return [...byCategory.values()];
+  }, [budgets]);
+
   // Overall spent and total budget
   const { totalBudget, totalSpent, spentPercent, remaining, isOverBudget } = useMemo(() => {
-    const sumLimits = budgets.reduce((sum, b) => sum + Number(b.monthly_limit || 0), 0);
+    const sumLimits = uniqueBudgets.reduce((sum, b) => sum + Number(b.monthly_limit || 0), 0);
     
     // Sum expenses for current month
     const sumSpent = expenses
@@ -89,11 +100,11 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
       remaining: left,
       isOverBudget: over,
     };
-  }, [budgets, expenses]);
+  }, [uniqueBudgets, expenses]);
 
   // Only real, saved budgets are shown so every card can be edited or deleted
   const displayCards = useMemo(() => {
-    return budgets.map((b) => {
+    return uniqueBudgets.map((b) => {
       const allCats = getAllCategories();
       const catMeta = allCats.find((c) => c.name.toLowerCase() === b.category.toLowerCase());
       const spent = expenses
@@ -125,12 +136,13 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
         color: cardColor,
       };
     });
-  }, [budgets, expenses]);
+  }, [uniqueBudgets, expenses]);
 
   // Semi-circle gauge calculation (SVG arc from 180 to 360 deg)
   const radius = 80;
   const circumference = Math.PI * radius;
   const strokeDashoffset = circumference - (circumference * spentPercent) / 100;
+  const gaugeColor = isOverBudget ? '#ef4444' : spentPercent > 75 ? '#f59e0b' : '#10b981';
 
   return (
     <div className={`w-full pb-24 px-0 select-none transition-colors ${
@@ -184,35 +196,27 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
             ) : (
               <>
                 <CheckCircle2 className="w-3 h-3" />
-                <span>On Track ({100 - spentPercent}% remaining)</span>
+                <span>On track · {spentPercent}% used</span>
               </>
             )}
           </span>
         </div>
 
-        {/* Semi-Circle Speedometer */}
-        <div className="relative w-full max-w-[260px] mx-auto h-36 flex flex-col items-center justify-end">
-          <svg className="w-full h-32 overflow-visible" viewBox="0 0 200 110">
-            {/* Background Arc */}
+        {/* Semi-Circle Gauge: values sit in the open space under the arc, never on it */}
+        <div className="relative w-full max-w-[240px] mx-auto mt-2">
+          <svg className="w-full h-auto block" viewBox="0 0 200 108">
             <path
               d="M 20 100 A 80 80 0 0 1 180 100"
               fill="none"
               stroke={isDark ? '#2c2c2e' : '#f1f1f4'}
-              strokeWidth="14"
+              strokeWidth="10"
               strokeLinecap="round"
             />
-            {/* Progress Arc */}
             <path
               d="M 20 100 A 80 80 0 0 1 180 100"
               fill="none"
-              stroke={
-                isOverBudget 
-                  ? '#ef4444' 
-                  : spentPercent > 75 
-                    ? '#f59e0b' 
-                    : '#10b981'
-              }
-              strokeWidth="14"
+              stroke={gaugeColor}
+              strokeWidth="10"
               strokeLinecap="round"
               strokeDasharray={circumference}
               strokeDashoffset={strokeDashoffset}
@@ -220,15 +224,14 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
             />
           </svg>
 
-          {/* Center values inside arc */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center pt-6 pointer-events-none">
-            <span className={`text-2xl sm:text-3xl font-extrabold tracking-tight font-sans ${
+          <div className="absolute inset-x-0 bottom-0 flex flex-col items-center pointer-events-none">
+            <span className={`text-2xl font-extrabold tracking-tight tabular-nums leading-none ${
               isOverBudget ? 'text-rose-500' : isDark ? 'text-white' : 'text-slate-900'
             }`}>
-              {isOverBudget ? `+${formatCurrency(totalSpent - totalBudget, currency)}` : formatCurrency(remaining, currency)}
+              {isOverBudget ? formatCurrency(totalSpent - totalBudget, currency) : formatCurrency(remaining, currency)}
             </span>
-            <span className="text-[11px] text-slate-400 font-medium mt-0.5">
-              {isOverBudget ? 'Exceeded Budget' : 'Remaining this month'}
+            <span className="text-[11px] text-slate-400 font-medium mt-1.5">
+              {isOverBudget ? 'Over budget this month' : 'Left to spend this month'}
             </span>
           </div>
         </div>

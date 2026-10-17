@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { ExpenseItem } from '@/types/expense';
 import { getAllCategories, formatCurrency } from '@/lib/currencies';
-import { CategoryIcon } from './CategoryIcon';
+import { TransactionRow } from './TransactionRow';
 
 interface InsightsViewProps {
   expenses: ExpenseItem[];
@@ -204,19 +204,6 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
       .sort((a, b) => b.amount - a.amount);
   }, [periodFiltered]);
 
-  // Helper for category icon
-  const getCategoryIcon = (categoryName: string) => {
-    const all = getAllCategories();
-    const cat = all.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
-    return (
-      <div 
-        className="w-full h-full rounded-xl flex items-center justify-center text-white shadow-xs"
-        style={{ backgroundColor: cat?.color || '#64748b' }}
-      >
-        <CategoryIcon name={cat?.icon || categoryName} className="w-4 h-4 text-white" />
-      </div>
-    );
-  };
 
   return (
     <div className={`w-full pb-24 px-0 select-none transition-colors ${
@@ -442,45 +429,16 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
           <div className={`rounded-2xl divide-y overflow-hidden border ${
             isDark ? 'bg-[#1c1c1e] divide-white/5 border-white/5' : 'bg-white divide-slate-100 border-slate-200/80 shadow-sm'
           }`}>
-            {periodFiltered.items.slice(0, 15).map((item) => {
-              const isIncome = item.type === 'income';
-
-              return (
-                <div
-                  key={item.id}
-                  onClick={() => onTransactionClick && onTransactionClick(item)}
-                  className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-black/5 dark:border-white/5 flex items-center justify-center shrink-0">
-                      {getCategoryIcon(item.category)}
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-bold truncate">{item.title}</h4>
-                      
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5 truncate">
-                        {item.payee && (
-                          <span className="font-medium text-slate-600 dark:text-slate-300 truncate">
-                            {isIncome ? `From: ${item.payee}` : `To: ${item.payee}`} &bull;
-                          </span>
-                        )}
-                        <span className="px-1.5 py-0.2 rounded-md bg-slate-100 dark:bg-white/10 font-semibold text-[10px] text-slate-700 dark:text-slate-300">
-                          {item.payment_method || 'Bank / UPI'}
-                        </span>
-                        <span>&bull;</span>
-                        <span>{item.date}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className={`text-sm font-extrabold shrink-0 ${
-                    isIncome ? 'text-[#34c759]' : isDark ? 'text-white' : 'text-slate-900'
-                  }`}>
-                    {isIncome ? '+' : '-'} {formatCurrency(item.amount, currency)}
-                  </div>
-                </div>
-              );
-            })}
+            {periodFiltered.items.slice(0, 15).map((item) => (
+              <TransactionRow
+                key={item.id}
+                item={item}
+                currency={currency}
+                isDark={isDark}
+                showDate={period !== 'day'}
+                onClick={onTransactionClick}
+              />
+            ))}
           </div>
         )}
       </div>

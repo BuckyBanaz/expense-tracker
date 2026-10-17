@@ -482,18 +482,31 @@ export async function upsertBudgetInDb(budget: CategoryBudget, user?: User | nul
 
   if (client && isSupabaseConfigured()) {
     try {
-      const { data, error } = await client
+      // Postgres treats NULL user_ids as distinct, so the (user_id, category, month)
+      // unique constraint never fires for signed-out use and an upsert would insert
+      // a duplicate. Update the existing row(s) explicitly, insert only if none.
+      let update = client
         .from('budgets')
-        .upsert([{
-          category: budget.category,
-          monthly_limit: budget.monthly_limit,
-          month: budget.month,
-          user_id: user?.id || null,
-        }], {
-          onConflict: 'user_id,category,month',
-        })
-        .select()
-        .single();
+        .update({ monthly_limit: budget.monthly_limit })
+        .eq('category', budget.category)
+        .eq('month', budget.month);
+      update = user?.id ? update.eq('user_id', user.id) : update.is('user_id', null);
+      const { data: updated, error: updateErr } = await update.select();
+
+      const { data, error } = updateErr
+        ? { data: null, error: updateErr }
+        : updated && updated.length > 0
+          ? { data: updated[updated.length - 1], error: null }
+          : await client
+              .from('budgets')
+              .insert([{
+                category: budget.category,
+                monthly_limit: budget.monthly_limit,
+                month: budget.month,
+                user_id: user?.id || null,
+              }])
+              .select()
+              .single();
 
       if (!error && data) {
         const saved = data as CategoryBudget;
@@ -530,11 +543,12 @@ export async function deleteBudgetFromDb(budget: CategoryBudget): Promise<boolea
   const client = getSupabase();
   if (client && isSupabaseConfigured()) {
     try {
-      let query = client.from('budgets').delete();
-      query = budget.id
-        ? query.eq('id', budget.id)
-        : query.eq('category', budget.category).eq('month', budget.month);
-      const { error } = await query;
+      // Delete by category + month so older duplicate rows go too
+      const { error } = await client
+        .from('budgets')
+        .delete()
+        .eq('category', budget.category)
+        .eq('month', budget.month);
       if (error) {
         setSyncError('Budget delete failed', error.message);
         return false;
