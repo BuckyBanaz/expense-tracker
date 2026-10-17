@@ -1,11 +1,14 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { ExpenseItem, CategoryBudget } from '@/types/expense';
 
-const DEFAULT_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const DEFAULT_SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  'https://fmwppzwuotupebtdiszv.supabase.co';
+
 const DEFAULT_SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  '';
+  'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd';
 
 const STORAGE_KEY_URL = 'expensee_supabase_url';
 const STORAGE_KEY_KEY = 'expensee_supabase_key';
@@ -21,10 +24,16 @@ let currentConfigString = '';
 
 export function getActiveSupabaseCredentials(): { url: string; key: string } {
   if (typeof window !== 'undefined') {
-    const customUrl = localStorage.getItem(STORAGE_KEY_URL);
-    const customKey = localStorage.getItem(STORAGE_KEY_KEY);
-    if (customUrl && customKey) {
-      return { url: customUrl.trim(), key: customKey.trim() };
+    const customUrl = localStorage.getItem(STORAGE_KEY_URL)?.trim();
+    const customKey = localStorage.getItem(STORAGE_KEY_KEY)?.trim();
+    if (
+      customUrl &&
+      customKey &&
+      customUrl.startsWith('https://') &&
+      !customUrl.includes('your-project-id') &&
+      customKey.length > 20
+    ) {
+      return { url: customUrl, key: customKey };
     }
   }
   return {
@@ -97,7 +106,6 @@ function getLocalExpenses(): ExpenseItem[] {
   }
   try {
     const parsed = JSON.parse(stored);
-    // Filter out old demo items if any existed
     if (Array.isArray(parsed)) {
       const clean = parsed.filter((item: any) => !String(item.id).startsWith('demo-'));
       return clean;
@@ -134,6 +142,9 @@ function saveLocalBudgets(budgets: CategoryBudget[]) {
   }
 }
 
+const isUUID = (str: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
 // ---------------- CRUD API FOR EXPENSES ----------------
 export async function fetchExpensesFromDb(user?: User | null): Promise<{ data: ExpenseItem[]; isSupabase: boolean; error?: string }> {
   const client = getSupabase();
@@ -157,7 +168,60 @@ export async function fetchExpensesFromDb(user?: User | null): Promise<{ data: E
       return { data: getLocalExpenses(), isSupabase: false, error: error.message };
     }
 
-    return { data: (data as ExpenseItem[]) || [], isSupabase: true };
+    let supabaseExpenses = (data as ExpenseItem[]) || [];
+
+    // AUTO-MIGRATION:
+    // If the browser has local expenses (e.g. entered before Supabase was connected or while offline),
+    // automatically migrate any unsynced items to Supabase now!
+    const local = getLocalExpenses();
+    if (local.length > 0) {
+      const unsynced = local.filter((loc) => {
+        return !supabaseExpenses.some((sub) =>
+          sub.id === loc.id ||
+          (sub.title === loc.title &&
+            Math.abs(Number(sub.amount) - Number(loc.amount)) < 0.001 &&
+            sub.date === loc.date &&
+            sub.payment_method === loc.payment_method)
+        );
+      });
+
+      if (unsynced.length > 0) {
+        console.log(`Auto-migrating ${unsynced.length} local items to Supabase...`);
+        const rowsToInsert = unsynced.map((item) => {
+          const row: any = {
+            title: item.title,
+            amount: item.amount,
+            type: item.type,
+            category: item.category,
+            date: item.date,
+            payment_method: item.payment_method,
+            payee: item.payee || null,
+            notes: item.notes || null,
+            user_id: user?.id || null,
+          };
+          if (item.id && isUUID(item.id)) {
+            row.id = item.id;
+          }
+          return row;
+        });
+
+        const { data: inserted, error: insertErr } = await client
+          .from('expenses')
+          .insert(rowsToInsert)
+          .select();
+
+        if (!insertErr && inserted) {
+          supabaseExpenses = [...(inserted as ExpenseItem[]), ...supabaseExpenses];
+        } else if (insertErr) {
+          console.warn('Auto-migration insert error:', insertErr.message);
+        }
+      }
+    }
+
+    // Keep local cache perfectly synced with Supabase for fast load and offline resilience
+    saveLocalExpenses(supabaseExpenses);
+
+    return { data: supabaseExpenses, isSupabase: true };
   } catch (err: any) {
     console.warn('Error querying Supabase:', err);
     return { data: getLocalExpenses(), isSupabase: false, error: err?.message };
@@ -192,7 +256,10 @@ export async function addExpenseToDb(item: Omit<ExpenseItem, 'id'>, user?: User 
         .single();
 
       if (!error && data) {
-        return data as ExpenseItem;
+        const saved = data as ExpenseItem;
+        const current = getLocalExpenses();
+        saveLocalExpenses([saved, ...current.filter((x) => x.id !== saved.id)]);
+        return saved;
       }
       console.warn('Supabase insert failed, saving locally:', error?.message);
     } catch (e) {
@@ -216,7 +283,15 @@ export async function updateExpenseInDb(id: string, updates: Partial<ExpenseItem
         .update(updates)
         .eq('id', id);
 
-      if (!error) return true;
+      if (!error) {
+        const current = getLocalExpenses();
+        const index = current.findIndex((item) => item.id === id);
+        if (index !== -1) {
+          current[index] = { ...current[index], ...updates };
+          saveLocalExpenses(current);
+        }
+        return true;
+      }
     } catch (e) {
       console.warn('Supabase error updating:', e);
     }
@@ -241,7 +316,11 @@ export async function deleteExpenseFromDb(id: string): Promise<boolean> {
         .delete()
         .eq('id', id);
 
-      if (!error) return true;
+      if (!error) {
+        const current = getLocalExpenses();
+        saveLocalExpenses(current.filter((item) => item.id !== id));
+        return true;
+      }
     } catch (e) {
       console.warn('Supabase error deleting:', e);
     }
@@ -278,7 +357,24 @@ export async function fetchBudgetsFromDb(month: string, user?: User | null): Pro
       return local.filter((b) => b.month === month);
     }
 
-    return (data as CategoryBudget[]) || [];
+    let supabaseBudgets = (data as CategoryBudget[]) || [];
+    const local = getLocalBudgets();
+    const localMonthBudgets = local.filter((b) => b.month === month);
+    if (localMonthBudgets.length > 0) {
+      const unsynced = localMonthBudgets.filter(
+        (loc) => !supabaseBudgets.some((sub) => sub.category === loc.category && sub.month === loc.month)
+      );
+      if (unsynced.length > 0) {
+        for (const item of unsynced) {
+          await upsertBudgetInDb(item, user);
+        }
+        const { data: refreshed } = await query;
+        if (refreshed) supabaseBudgets = refreshed as CategoryBudget[];
+      }
+    }
+
+    saveLocalBudgets(supabaseBudgets);
+    return supabaseBudgets;
   } catch (err) {
     console.warn('Supabase budgets query error:', err);
     const local = getLocalBudgets();
@@ -309,7 +405,15 @@ export async function upsertBudgetInDb(budget: CategoryBudget, user?: User | nul
         .single();
 
       if (!error && data) {
-        return data as CategoryBudget;
+        const saved = data as CategoryBudget;
+        const current = getLocalBudgets();
+        const idx = current.findIndex(
+          (b) => b.category === saved.category && b.month === saved.month
+        );
+        if (idx >= 0) current[idx] = saved;
+        else current.push(saved);
+        saveLocalBudgets(current);
+        return saved;
       }
       console.warn('Supabase upsert budget failed:', error?.message);
     } catch (err) {
