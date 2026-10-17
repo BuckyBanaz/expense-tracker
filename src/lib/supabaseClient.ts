@@ -438,9 +438,9 @@ export async function upsertBudgetInDb(budget: CategoryBudget, user?: User | nul
         saveLocalBudgets(current);
         return saved;
       }
-      console.warn('Supabase upsert budget failed:', error?.message);
-    } catch (err) {
-      console.warn('Supabase budget upsert error:', err);
+      setSyncError('Budget save failed', error?.message);
+    } catch (err: any) {
+      setSyncError('Budget save failed', err?.message);
     }
   }
 
@@ -456,6 +456,31 @@ export async function upsertBudgetInDb(budget: CategoryBudget, user?: User | nul
   }
   saveLocalBudgets(current);
   return toSave;
+}
+
+export async function deleteBudgetFromDb(budget: CategoryBudget): Promise<boolean> {
+  const client = getSupabase();
+  if (client && isSupabaseConfigured()) {
+    try {
+      let query = client.from('budgets').delete();
+      query = budget.id
+        ? query.eq('id', budget.id)
+        : query.eq('category', budget.category).eq('month', budget.month);
+      const { error } = await query;
+      if (error) {
+        setSyncError('Budget delete failed', error.message);
+        return false;
+      }
+    } catch (e: any) {
+      setSyncError('Budget delete failed', e?.message);
+      return false;
+    }
+  }
+
+  saveLocalBudgets(
+    getLocalBudgets().filter((b) => !(b.category === budget.category && b.month === budget.month))
+  );
+  return true;
 }
 
 export async function clearAllData(): Promise<void> {

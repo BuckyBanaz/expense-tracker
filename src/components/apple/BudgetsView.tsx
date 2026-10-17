@@ -1,10 +1,13 @@
 'use client';
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Plus, 
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Pencil,
+  Trash2,
+  X
 } from 'lucide-react';
 import { CategoryBudget, ExpenseItem } from '@/types/expense';
 import { formatCurrency, getAllCategories } from '@/lib/currencies';
@@ -15,6 +18,8 @@ interface BudgetsViewProps {
   expenses: ExpenseItem[];
   currency: string;
   onOpenNewBudget: () => void;
+  onSaveBudget: (budget: CategoryBudget) => Promise<void>;
+  onDeleteBudget: (budget: CategoryBudget) => Promise<void>;
   theme?: 'dark' | 'light';
 }
 
@@ -23,27 +28,59 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
   expenses,
   currency,
   onOpenNewBudget,
+  onSaveBudget,
+  onDeleteBudget,
   theme = 'light',
 }) => {
   const isDark = theme === 'dark';
-  const [currentMonth, setCurrentMonth] = useState('');
+  const [editing, setEditing] = useState<CategoryBudget | null>(null);
+  const [editLimit, setEditLimit] = useState('');
+  const [isBusy, setIsBusy] = useState(false);
 
-  useEffect(() => {
-    setCurrentMonth(new Date().toISOString().slice(0, 7));
-  }, []);
+  const openEditor = (budget: CategoryBudget) => {
+    setEditing(budget);
+    setEditLimit(String(budget.monthly_limit));
+  };
+
+  const handleEditSave = async () => {
+    if (!editing) return;
+    const val = Number(editLimit);
+    if (!val || val <= 0) {
+      alert('Please enter a limit greater than 0.');
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await onSaveBudget({ ...editing, monthly_limit: val });
+      setEditing(null);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDelete = async (budget: CategoryBudget) => {
+    if (!confirm(`Delete the "${budget.category}" budget?`)) return;
+    setIsBusy(true);
+    try {
+      await onDeleteBudget(budget);
+      setEditing(null);
+    } finally {
+      setIsBusy(false);
+    }
+  };
 
   // Overall spent and total budget
   const { totalBudget, totalSpent, spentPercent, remaining, isOverBudget } = useMemo(() => {
-    const sumLimits = budgets.reduce((sum, b) => sum + Number(b.monthly_limit || 0), 0) || 37000;
+    const sumLimits = budgets.reduce((sum, b) => sum + Number(b.monthly_limit || 0), 0);
     
     // Sum expenses for current month
     const sumSpent = expenses
       .filter((e) => e.type === 'expense')
       .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-    const percent = Math.min(100, Math.round((sumSpent / sumLimits) * 100));
+    const percent = sumLimits > 0 ? Math.min(100, Math.round((sumSpent / sumLimits) * 100)) : 0;
     const left = Math.max(0, sumLimits - sumSpent);
-    const over = sumSpent > sumLimits;
+    const over = sumLimits > 0 && sumSpent > sumLimits;
 
     return {
       totalBudget: sumLimits,
@@ -54,20 +91,9 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
     };
   }, [budgets, expenses]);
 
-  // Map user's actual budgets or fallback
+  // Only real, saved budgets are shown so every card can be edited or deleted
   const displayCards = useMemo(() => {
-    const baseBudgets = budgets.length > 0 
-      ? budgets 
-      : [
-          { category: 'Food & Dining', monthly_limit: 8000, month: currentMonth },
-          { category: 'Housing', monthly_limit: 16000, month: currentMonth },
-          { category: 'Bills & Utilities', monthly_limit: 4000, month: currentMonth },
-          { category: 'Transportation', monthly_limit: 3500, month: currentMonth },
-          { category: 'Entertainment', monthly_limit: 2500, month: currentMonth },
-          { category: 'Health & Fitness', monthly_limit: 3000, month: currentMonth },
-        ];
-
-    return baseBudgets.map((b) => {
+    return budgets.map((b) => {
       const allCats = getAllCategories();
       const catMeta = allCats.find((c) => c.name.toLowerCase() === b.category.toLowerCase());
       const spent = expenses
@@ -80,6 +106,7 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
       const cardColor = catMeta?.color || '#0ea5e9';
 
       return {
+        budget: b,
         category: b.category,
         icon: (
           <div
@@ -98,7 +125,7 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
         color: cardColor,
       };
     });
-  }, [budgets, expenses, currentMonth]);
+  }, [budgets, expenses]);
 
   // Semi-circle gauge calculation (SVG arc from 180 to 360 deg)
   const radius = 80;
@@ -226,11 +253,21 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
       </div>
 
       {/* 3. 2x2 Grid of Apple Category Budget Cards */}
+      {displayCards.length === 0 && (
+        <button
+          onClick={onOpenNewBudget}
+          className={`w-full mt-4 p-5 rounded-3xl border border-dashed text-xs font-semibold text-slate-400 ios-press ${
+            isDark ? 'border-white/10' : 'border-slate-300'
+          }`}
+        >
+          No budgets yet. Tap to set a monthly limit for a category.
+        </button>
+      )}
       <div className="grid grid-cols-2 gap-3 mt-4">
         {displayCards.map((card) => (
           <div
             key={card.category}
-            onClick={onOpenNewBudget}
+            onClick={() => openEditor(card.budget)}
             className={`p-3.5 rounded-3xl border flex flex-col justify-between cursor-pointer ios-press transition-all ${
               isDark 
                 ? 'bg-[#1c1c1e] border-white/5 hover:border-white/10' 
@@ -239,9 +276,23 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
           >
             {/* Header: Icon + Category Name */}
             <div>
-              <div className="flex items-center gap-1.5 font-bold text-xs truncate">
+              <div className="flex items-center gap-1.5 font-bold text-xs">
                 <span className="shrink-0">{card.icon}</span>
-                <span className="truncate">{card.category}</span>
+                <span className="truncate flex-1 min-w-0">{card.category}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); openEditor(card.budget); }}
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white shrink-0"
+                  title="Edit budget"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(card.budget); }}
+                  className="p-1 rounded-full text-slate-400 hover:text-rose-500 shrink-0"
+                  title="Delete budget"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
               </div>
               <p className="text-[10px] text-slate-400 mt-1">
                 Limit: {formatCurrency(card.limit, currency)}
@@ -278,6 +329,69 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Edit / Delete budget sheet */}
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          onClick={() => !isBusy && setEditing(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-sm rounded-3xl border p-5 shadow-2xl ${
+              isDark ? 'bg-[#1c1c1e] border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-base font-extrabold tracking-tight">{editing.category}</h3>
+                <p className="text-xs text-slate-400">Edit monthly limit</p>
+              </div>
+              <button
+                onClick={() => setEditing(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-black dark:hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">₹</span>
+              <input
+                type="number"
+                min="0"
+                step="100"
+                inputMode="decimal"
+                autoFocus
+                value={editLimit}
+                onChange={(e) => setEditLimit(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleEditSave()}
+                className={`w-full text-base font-bold pl-7 pr-3 py-2.5 rounded-2xl border focus:outline-none ${
+                  isDark ? 'bg-black/30 text-white border-white/10 focus:border-white/30' : 'bg-slate-50 text-black border-slate-200 focus:border-slate-400'
+                }`}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 mt-4">
+              <button
+                onClick={() => handleDelete(editing)}
+                disabled={isBusy}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold text-rose-600 bg-rose-500/10 border border-rose-500/20 active:scale-95 transition-all disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete
+              </button>
+              <button
+                onClick={handleEditSave}
+                disabled={isBusy}
+                className="flex-1 px-4 py-2 rounded-full text-xs font-bold bg-black text-white dark:bg-white dark:text-black hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {isBusy ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

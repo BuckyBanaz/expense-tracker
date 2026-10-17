@@ -31,6 +31,7 @@ import {
   deleteExpenseFromDb, 
   fetchBudgetsFromDb, 
   upsertBudgetInDb,
+  deleteBudgetFromDb,
   isSupabaseConfigured,
   getSupabase,
   getActiveSupabaseCredentials,
@@ -170,16 +171,26 @@ export default function Home() {
 
   // Save Budget limit
   const handleSaveBudget = async (budget: CategoryBudget) => {
-    await upsertBudgetInDb(budget, user);
+    const saved = await upsertBudgetInDb(budget, user);
+    setSyncError(getLastSyncError());
     setBudgets((prev) => {
       const idx = prev.findIndex((b) => b.category === budget.category && b.month === budget.month);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = budget;
+        copy[idx] = saved;
         return copy;
       }
-      return [...prev, budget];
+      return [...prev, saved];
     });
+  };
+
+  // Delete Budget limit
+  const handleDeleteBudget = async (budget: CategoryBudget) => {
+    const ok = await deleteBudgetFromDb(budget);
+    setSyncError(getLastSyncError());
+    if (ok) {
+      setBudgets((prev) => prev.filter((b) => !(b.category === budget.category && b.month === budget.month)));
+    }
   };
 
   // Handle PIN changed
@@ -365,6 +376,8 @@ export default function Home() {
               expenses={expenses}
               currency="INR"
               onOpenNewBudget={() => setIsBudgetModalOpen(true)}
+              onSaveBudget={handleSaveBudget}
+              onDeleteBudget={handleDeleteBudget}
               theme={theme}
             />
           )}
