@@ -133,7 +133,7 @@ export const BudgetsView: React.FC<BudgetsViewProps> = ({
   const strokeDashoffset = circumference - (circumference * spentPercent) / 100;
 
   return (
-    <div className={`w-full pb-24 px-4 sm:px-6 select-none transition-colors ${
+    <div className={`w-full pb-24 px-0 select-none transition-colors ${
       isDark ? 'text-white' : 'text-slate-900'
     }`}>
       

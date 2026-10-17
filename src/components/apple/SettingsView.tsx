@@ -57,7 +57,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const isDark = theme === 'dark';
 
   return (
-    <div className={`w-full pb-28 px-4 sm:px-6 select-none transition-colors ${
+    <div className={`w-full pb-28 px-0 select-none transition-colors ${
       isDark ? 'text-white' : 'text-slate-900'
     }`}>
       

@@ -27,7 +27,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const isDark = theme === 'dark';
 
   const filtered = useMemo(() => {
-    return expenses.filter((item) => {
+    const list = expenses.filter((item) => {
       if (filterType !== 'all' && item.type !== filterType) return false;
       if (methodFilter !== 'all') {
         const itemPm = item.payment_method || 'Bank / UPI';
@@ -49,10 +49,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       }
       return true;
     });
+
+    // Always sort recent (newest) first!
+    return list.sort((a, b) => {
+      if (a.date !== b.date) {
+        return b.date.localeCompare(a.date);
+      }
+      const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (tA && tB && tA !== tB) {
+        return tB - tA;
+      }
+      if (tA || tB) return tB - tA;
+      return 0;
+    });
   }, [expenses, filterType, methodFilter, search]);
 
   return (
-    <div className={`w-full pb-28 px-4 sm:px-6 select-none transition-colors ${
+    <div className={`w-full pb-28 px-0 select-none transition-colors ${
       isDark ? 'text-white' : 'text-slate-900'
     }`}>
       

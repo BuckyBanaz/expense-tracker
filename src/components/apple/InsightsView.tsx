@@ -124,8 +124,21 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
       .filter((e) => e.type === 'expense')
       .reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
+    const sorted = [...filtered].sort((a, b) => {
+      if (a.date !== b.date) {
+        return b.date.localeCompare(a.date);
+      }
+      const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (tA && tB && tA !== tB) {
+        return tB - tA;
+      }
+      if (tA || tB) return tB - tA;
+      return 0;
+    });
+
     return {
-      items: filtered,
+      items: sorted,
       income,
       expense,
       periodLabel: 
@@ -206,7 +219,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
   };
 
   return (
-    <div className={`w-full pb-24 px-4 sm:px-6 select-none transition-colors ${
+    <div className={`w-full pb-24 px-0 select-none transition-colors ${
       isDark ? 'text-white' : 'text-slate-900'
     }`}>
       

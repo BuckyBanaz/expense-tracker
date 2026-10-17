@@ -22,8 +22,6 @@ const STORAGE_KEY_LOCAL_DATA = 'expensee_local_expenses';
 const STORAGE_KEY_LOCAL_BUDGETS = 'expensee_local_budgets';
 // Expenses that failed to save to the cloud and still need uploading
 const STORAGE_KEY_PENDING = 'expensee_pending_expenses';
-// Set once this browser's pre-cloud local data has been uploaded
-const STORAGE_KEY_LEGACY_SYNCED = 'expensee_legacy_synced';
 
 // CLEAN STATE: Zero mock data
 export const INITIAL_DEMO_EXPENSES: ExpenseItem[] = [];
@@ -121,6 +119,25 @@ export function clearCustomSupabaseConfig() {
 }
 
 // ---------------- LOCAL STORAGE FALLBACK HELPERS ----------------
+export function sortExpensesRecentFirst(items: ExpenseItem[]): ExpenseItem[] {
+  return [...items].sort((a, b) => {
+    // 1. Compare date first (YYYY-MM-DD descending)
+    if (a.date !== b.date) {
+      return b.date.localeCompare(a.date);
+    }
+    // 2. If same date, newest created_at timestamp first
+    const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    if (tA && tB && tA !== tB) {
+      return tB - tA;
+    }
+    if (tA || tB) {
+      return tB - tA;
+    }
+    return 0;
+  });
+}
+
 function getLocalExpenses(): ExpenseItem[] {
   if (typeof window === 'undefined') return [];
   const stored = localStorage.getItem(STORAGE_KEY_LOCAL_DATA);
@@ -131,7 +148,7 @@ function getLocalExpenses(): ExpenseItem[] {
     const parsed = JSON.parse(stored);
     if (Array.isArray(parsed)) {
       const clean = parsed.filter((item: any) => !String(item.id).startsWith('demo-'));
-      return clean;
+      return sortExpensesRecentFirst(clean);
     }
     return [];
   } catch {
@@ -258,27 +275,12 @@ async function syncExpenses(user?: User | null): Promise<FetchExpensesResult> {
       return { data: getLocalExpenses(), isSupabase: false, error: error.message };
     }
 
-    let supabaseExpenses = (data as ExpenseItem[]) || [];
+    let supabaseExpenses = sortExpensesRecentFirst((data as ExpenseItem[]) || []);
     const cloudIds = new Set(supabaseExpenses.map((e) => e.id));
 
-    // Upload only items that explicitly failed to save, plus (once per browser) data
-    // entered before cloud sync worked. Never diff the whole local cache, or items
-    // deleted on another device would be re-uploaded.
+    // The cloud is the source of truth. Upload only items that explicitly failed to
+    // save; never diff the local cache, which may hold stale or deleted entries.
     const toUpload = getPendingExpenses().filter((p) => !cloudIds.has(p.id));
-    if (typeof window !== 'undefined' && !localStorage.getItem(STORAGE_KEY_LEGACY_SYNCED)) {
-      for (const loc of getLocalExpenses()) {
-        const inCloud = supabaseExpenses.some((sub) =>
-          sub.id === loc.id ||
-          (sub.title === loc.title &&
-            Math.abs(Number(sub.amount) - Number(loc.amount)) < 0.001 &&
-            sub.date === loc.date &&
-            sub.payment_method === loc.payment_method)
-        );
-        if (!inCloud && !toUpload.some((p) => p.id === loc.id)) {
-          toUpload.push(loc);
-        }
-      }
-    }
 
     if (toUpload.length > 0) {
       // Stable UUIDs make the upload idempotent: re-sending an item can never duplicate it
@@ -311,10 +313,6 @@ async function syncExpenses(user?: User | null): Promise<FetchExpensesResult> {
         return { data: getLocalExpenses(), isSupabase: false, error: refreshErr.message };
       }
       supabaseExpenses = (refreshed as ExpenseItem[]) || [];
-    }
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY_LEGACY_SYNCED, '1');
     }
 
     // Keep local cache synced with Supabase for fast load and offline resilience

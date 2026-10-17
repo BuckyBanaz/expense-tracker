@@ -276,7 +276,7 @@ export default function Home() {
       }`}>
         
         {/* Top App Header */}
-        <header className={`w-full px-5 pt-4 pb-3 flex items-center justify-between sticky top-0 z-30 transition-colors ${
+        <header className={`w-full px-3.5 pt-3.5 pb-2.5 flex items-center justify-between sticky top-0 z-30 transition-colors ${
           isDark 
             ? 'bg-black/95 border-b border-white/10 ios-blur' 
             : 'bg-[#f5f5f7]/95 border-b border-slate-200/70 ios-blur'
@@ -340,7 +340,7 @@ export default function Home() {
         </header>
 
         {/* Scrollable Main Screen Content */}
-        <main className="flex-1 w-full px-4 pt-3 pb-24 overflow-y-auto no-scrollbar">
+        <main className="flex-1 w-full px-2.5 sm:px-3 pt-2 pb-24 overflow-y-auto no-scrollbar">
           {syncError && (
             <div className="mb-3 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold break-words">
               <div>⚠️ Cloud sync not working — data is saved on this device only.</div>
