@@ -187,7 +187,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div>
                   <span className="text-sm font-semibold block leading-tight">Custom Categories</span>
-                  <span className="text-[11px] text-slate-400">Add categories with icons & colors</span>
+                  <span className="text-[11px] text-slate-400">Add, edit or delete your categories</span>
                 </div>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-400" />

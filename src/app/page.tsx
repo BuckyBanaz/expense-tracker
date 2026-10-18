@@ -20,7 +20,7 @@ import { HistoryView } from '@/components/apple/HistoryView';
 import { FastInputView } from '@/components/apple/FastInputView';
 import { PinLockScreen } from '@/components/apple/PinLockScreen';
 import { ChangePinModal } from '@/components/apple/ChangePinModal';
-import { CreateCategoryModal } from '@/components/apple/CreateCategoryModal';
+import { ManageCategoriesModal } from '@/components/apple/ManageCategoriesModal';
 import { BudgetModal } from '@/components/BudgetModal';
 import { SupabaseConfigModal } from '@/components/SupabaseConfigModal';
 import { AuthModal } from '@/components/AuthModal';
@@ -551,12 +551,13 @@ export default function Home() {
         theme={theme}
       />
 
-      <CreateCategoryModal
+      <ManageCategoriesModal
         isOpen={isCreateCategoryModalOpen}
         onClose={() => setIsCreateCategoryModalOpen(false)}
-        onCategoryCreated={() => {
+        onChanged={() => {
           setCategoriesVersion((v) => v + 1);
-          setIsCreateCategoryModalOpen(false);
+          // A rename relabels transactions and budgets, so reload them too
+          loadData();
         }}
         theme={theme}
       />

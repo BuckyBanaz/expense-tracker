@@ -323,12 +323,15 @@ function toCategoryMeta(row: any): CategoryMeta {
   };
 }
 
+// Names are matched case-insensitively with ILIKE, so escape its wildcards
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+
 async function writeCategory(client: SupabaseClient, category: CategoryMeta) {
   const fields = { color: category.color, icon: category.icon, type: category.type };
   const { data: updated, error: updateErr } = await client
     .from('categories')
     .update(fields)
-    .ilike('name', category.name.replace(/[\\%_]/g, '\\$&'))
+    .ilike('name', escapeLike(category.name))
     .is('user_id', null)
     .select();
   if (updateErr) return updateErr;
@@ -393,6 +396,49 @@ export async function saveCustomCategoryToDb(category: CategoryMeta): Promise<vo
   const error = await writeCategory(client, category);
   if (error) {
     setSyncError('Category save failed', error.message);
+    throw new Error(error.message);
+  }
+  await fetchCustomCategoriesFromDb();
+}
+
+// Throws if the cloud save fails. Renaming also relabels the category's
+// transactions and budgets so they keep their icon and color.
+export async function updateCustomCategoryInDb(oldName: string, category: CategoryMeta): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from('categories')
+    .update({ name: category.name, color: category.color, icon: category.icon, type: category.type })
+    .ilike('name', escapeLike(oldName))
+    .is('user_id', null);
+  if (error) {
+    setSyncError('Category update failed', error.message);
+    throw new Error(error.message);
+  }
+
+  if (oldName !== category.name) {
+    const [exp, bud] = await Promise.all([
+      client.from('expenses').update({ category: category.name }).eq('category', oldName),
+      client.from('budgets').update({ category: category.name }).eq('category', oldName),
+    ]);
+    const relabelErr = exp.error || bud.error;
+    if (relabelErr) {
+      setSyncError('Relabeling transactions failed', relabelErr.message);
+      throw new Error(relabelErr.message);
+    }
+  }
+  await fetchCustomCategoriesFromDb();
+}
+
+// Existing transactions keep the category name; they just lose its icon/color
+export async function deleteCustomCategoryFromDb(name: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client
+    .from('categories')
+    .delete()
+    .ilike('name', escapeLike(name))
+    .is('user_id', null);
+  if (error) {
+    setSyncError('Category delete failed', error.message);
     throw new Error(error.message);
   }
   await fetchCustomCategoriesFromDb();

@@ -83,6 +83,12 @@ export function setCustomCategories(list: CategoryMeta[]) {
   customCategories = list;
 }
 
+// Only the user's own categories (defaults excluded), for the manage screen
+export function getCustomCategories(): CategoryMeta[] {
+  const defaultNames = new Set(DEFAULT_CATEGORIES.map((c) => c.name.toLowerCase()));
+  return customCategories.filter((c) => !defaultNames.has(c.name.toLowerCase()));
+}
+
 export function getAllCategories(): CategoryMeta[] {
   // Merge without duplicates
   const existingNames = new Set(DEFAULT_CATEGORIES.map((c) => c.name.toLowerCase()));

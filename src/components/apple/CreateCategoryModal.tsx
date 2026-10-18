@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Sparkles, Check, Plus } from 'lucide-react';
 import { CategoryMeta } from '@/types/expense';
 import { AVAILABLE_ICONS, COLOR_PRESETS } from '@/lib/currencies';
-import { saveCustomCategoryToDb } from '@/lib/supabaseClient';
+import { saveCustomCategoryToDb, updateCustomCategoryInDb } from '@/lib/supabaseClient';
 import { CategoryIcon } from './CategoryIcon';
 import confetti from 'canvas-confetti';
 
@@ -12,6 +12,8 @@ interface CreateCategoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCategoryCreated: (category: CategoryMeta) => void;
+  /** When set, the modal edits this category instead of creating one */
+  editCategory?: CategoryMeta | null;
   theme?: 'dark' | 'light';
 }
 
@@ -19,6 +21,7 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
   isOpen,
   onClose,
   onCategoryCreated,
+  editCategory = null,
   theme = 'light',
 }) => {
   const [name, setName] = useState('');
@@ -27,7 +30,19 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
   const [type, setType] = useState<'expense' | 'income' | 'both'>('expense');
   const [error, setError] = useState('');
 
+  const [isSaving, setIsSaving] = useState(false);
+
   const isDark = theme === 'dark';
+  const isEditing = Boolean(editCategory);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setName(editCategory?.name ?? '');
+    setSelectedIcon(editCategory?.icon ?? 'Utensils');
+    setSelectedColor(editCategory?.color ?? '#f97316');
+    setType(editCategory?.type ?? 'expense');
+    setError('');
+  }, [isOpen, editCategory]);
 
   if (!isOpen) return null;
 
@@ -50,16 +65,20 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
       type,
     };
 
+    setIsSaving(true);
     try {
-      await saveCustomCategoryToDb(newCat);
+      if (editCategory) await updateCustomCategoryInDb(editCategory.name, newCat);
+      else await saveCustomCategoryToDb(newCat);
     } catch {
       setError('Could not save to the cloud. Check your connection and try again.');
       return;
+    } finally {
+      setIsSaving(false);
     }
     setError('');
     onCategoryCreated(newCat);
 
-    try {
+    if (!isEditing) try {
       confetti({
         particleCount: 35,
         spread: 50,
@@ -72,7 +91,7 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
       <div className={`w-full max-w-sm rounded-3xl p-5 border shadow-2xl relative transition-all ${
         isDark ? 'bg-[#1c1c1e] border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
       }`}>
@@ -87,7 +106,7 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
               <CategoryIcon name={selectedIcon} className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-extrabold text-sm font-sans">New Custom Category</h3>
+              <h3 className="font-extrabold text-sm font-sans">{isEditing ? 'Edit Category' : 'New Custom Category'}</h3>
               <p className="text-[10px] text-slate-400">Pick an icon and color</p>
             </div>
           </div>
@@ -218,9 +237,10 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-black text-white dark:bg-white dark:text-black hover:opacity-90 active:scale-95 transition-all shadow-sm"
+              disabled={isSaving}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-black text-white dark:bg-white dark:text-black hover:opacity-90 active:scale-95 transition-all shadow-sm disabled:opacity-50"
             >
-              Create Category
+              {isSaving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Category'}
             </button>
           </div>
 
