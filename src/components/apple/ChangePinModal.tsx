@@ -3,13 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, KeyRound, Eye, EyeOff, RotateCcw, ShieldCheck, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { saveAppPinToDb } from '@/lib/supabaseClient';
 
 interface ChangePinModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentPin: string;
-  onPinChanged: (newPin: string) => void;
+  onPinChanged: (newPin: string) => Promise<boolean>;
   theme?: 'dark' | 'light';
 }
 
@@ -46,14 +45,9 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
 
   if (!isOpen) return null;
 
-  const getEffectiveStoredPin = () => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('spendwise_app_pin') || currentPin || '1234';
-    }
-    return currentPin || '1234';
-  };
+  const getEffectiveStoredPin = () => currentPin || '1234';
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -87,12 +81,12 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
       return;
     }
 
-    // Persist immediately to cloud and localStorage
-    saveAppPinToDb(newPin);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('spendwise_app_pin', newPin);
+    // Parent saves to the cloud; only report success once that worked
+    const ok = await onPinChanged(newPin);
+    if (!ok) {
+      setError('Could not save the new PIN. Check your connection and try again.');
+      return;
     }
-    onPinChanged(newPin);
 
     setSuccessMessage(`New PIN (${newPin}) is now active!`);
     setSuccess(true);
@@ -115,10 +109,6 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
   const handleQuickResetTo1234 = () => {
     const input = prompt('Enter recovery password (momdad143) to reset PIN to 1234:');
     if (input && input.trim().toLowerCase() === 'momdad143') {
-      saveAppPinToDb('1234');
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('spendwise_app_pin', '1234');
-      }
       onPinChanged('1234');
       setSuccessMessage('PIN reset to default: 1234');
       setSuccess(true);

@@ -56,8 +56,18 @@ export default function Home() {
 
   // Security / PIN lock state
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [savedPin, setSavedPin] = useState('1234');
+  // null until the PIN has been read from the cloud
+  const [savedPin, setSavedPin] = useState<string | null>(null);
+  const [pinLoadFailed, setPinLoadFailed] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
+
+  // The PIN lives only in Supabase so every device uses the same one
+  const loadPin = useCallback(async () => {
+    setPinLoadFailed(false);
+    const cloudPin = await fetchAppPinFromDb();
+    if (cloudPin) setSavedPin(cloudPin);
+    else setPinLoadFailed(true);
+  }, []);
 
   // Database state: Strictly Clean, zero mock data
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
@@ -75,16 +85,8 @@ export default function Home() {
 
   useEffect(() => {
     setCurrentMonth(new Date().toISOString().slice(0, 7));
-    // Load saved PIN locally first for immediate response
-    if (typeof window !== 'undefined') {
-      const pin = localStorage.getItem('spendwise_app_pin') || '1234';
-      setSavedPin(pin);
-    }
-    // Fetch and sync active PIN from Supabase cloud
-    fetchAppPinFromDb().then((cloudPin) => {
-      if (cloudPin) setSavedPin(cloudPin);
-    });
-  }, []);
+    loadPin();
+  }, [loadPin]);
 
   // Sync theme
   useEffect(() => {
@@ -158,21 +160,38 @@ export default function Home() {
 
   // Save Transaction
   const handleSaveTransaction = async (data: Omit<ExpenseItem, 'id'>) => {
-    const created = await addExpenseToDb(data, user);
-    setExpenses((prev) => [created, ...prev]);
-    setSyncError(getLastSyncError());
+    try {
+      const created = await addExpenseToDb(data, user);
+      setExpenses((prev) => [created, ...prev]);
+      setSyncError(null);
+    } catch (e) {
+      setSyncError(getLastSyncError());
+      alert('Could not save to the cloud. Check your internet connection and try again.');
+      throw e;
+    }
   };
 
   // Delete Transaction
   const handleDeleteTransaction = async (id: string) => {
-    await deleteExpenseFromDb(id);
-    setExpenses((prev) => prev.filter((item) => item.id !== id));
+    const ok = await deleteExpenseFromDb(id);
+    setSyncError(getLastSyncError());
+    if (ok) {
+      setExpenses((prev) => prev.filter((item) => item.id !== id));
+    } else {
+      alert('Could not delete. Check your internet connection and try again.');
+    }
   };
 
   // Save Budget limit
   const handleSaveBudget = async (budget: CategoryBudget) => {
-    const saved = await upsertBudgetInDb(budget, user);
-    setSyncError(getLastSyncError());
+    let saved: CategoryBudget;
+    try {
+      saved = await upsertBudgetInDb(budget, user);
+    } catch {
+      setSyncError(getLastSyncError());
+      alert('Could not save the budget. Check your internet connection and try again.');
+      return;
+    }
     setBudgets((prev) => {
       const idx = prev.findIndex((b) => b.category === budget.category && b.month === budget.month);
       if (idx >= 0) {
@@ -190,16 +209,21 @@ export default function Home() {
     setSyncError(getLastSyncError());
     if (ok) {
       setBudgets((prev) => prev.filter((b) => !(b.category === budget.category && b.month === budget.month)));
+    } else {
+      alert('Could not delete the budget. Check your internet connection and try again.');
     }
   };
 
   // Handle PIN changed
-  const handlePinChanged = (newPin: string) => {
-    setSavedPin(newPin);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('spendwise_app_pin', newPin);
+  const handlePinChanged = async (newPin: string) => {
+    const ok = await saveAppPinToDb(newPin);
+    if (ok) {
+      setSavedPin(newPin);
+    } else {
+      setSyncError(getLastSyncError());
+      alert('Could not save the new PIN to the cloud. Your old PIN is still active.');
     }
-    saveAppPinToDb(newPin);
+    return ok;
   };
 
   // Export CSV
@@ -257,6 +281,8 @@ export default function Home() {
       <PinLockScreen
         onUnlock={() => setIsUnlocked(true)}
         savedPin={savedPin}
+        pinLoadFailed={pinLoadFailed}
+        onRetryPin={loadPin}
         theme={theme}
         onPinChanged={handlePinChanged}
       />
@@ -343,7 +369,7 @@ export default function Home() {
         <main className="flex-1 w-full px-2.5 sm:px-3 pt-2 pb-24 overflow-y-auto no-scrollbar">
           {syncError && (
             <div className="mb-3 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold break-words">
-              <div>⚠️ Cloud sync not working — data is saved on this device only.</div>
+              <div>⚠️ Can&apos;t reach the cloud — changes won&apos;t be saved until this is fixed.</div>
               <div className="mt-1 font-mono font-normal">{syncError}</div>
               <div className="mt-1 font-mono font-normal opacity-80">
                 db: {getActiveSupabaseCredentials().url.replace('https://', '')} · user: {user?.email || 'not signed in'}
@@ -496,7 +522,7 @@ export default function Home() {
       <ChangePinModal
         isOpen={isChangePinOpen}
         onClose={() => setIsChangePinOpen(false)}
-        currentPin={savedPin}
+        currentPin={savedPin ?? ''}
         onPinChanged={handlePinChanged}
         theme={theme}
       />
@@ -547,7 +573,7 @@ export default function Home() {
         isOpen={isWipeModalOpen}
         onClose={() => setIsWipeModalOpen(false)}
         onConfirmWipe={handleExecuteWipe}
-        currentPin={savedPin}
+        currentPin={savedPin ?? ''}
         theme={theme}
       />
 

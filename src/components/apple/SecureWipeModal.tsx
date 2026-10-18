@@ -52,12 +52,7 @@ export const SecureWipeModal: React.FC<SecureWipeModalProps> = ({
 
   if (!isOpen) return null;
 
-  const getEffectiveStoredPin = () => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('spendwise_app_pin') || currentPin || '1234';
-    }
-    return currentPin || '1234';
-  };
+  const getEffectiveStoredPin = () => currentPin || '1234';
 
   // Step 1 -> Step 2
   const handleProceedToPin = () => {

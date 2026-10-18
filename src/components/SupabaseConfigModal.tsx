@@ -14,8 +14,6 @@ import {
 } from 'lucide-react';
 import { 
   getActiveSupabaseCredentials, 
-  saveCustomSupabaseConfig, 
-  clearCustomSupabaseConfig, 
   getSupabase,
   clearAllData
 } from '@/lib/supabaseClient';
@@ -69,7 +67,6 @@ export const SupabaseConfigModal: React.FC<SupabaseConfigModalProps> = ({
     setTestResult(null);
 
     try {
-      saveCustomSupabaseConfig(url, key);
       const client = getSupabase();
       
       if (!client) {

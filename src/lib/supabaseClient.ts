@@ -16,21 +16,35 @@ const DEFAULT_SUPABASE_ANON_KEY =
     ? envKey
     : 'sb_publishable_DLEQZS7p9oTSvqaeyLXaGA_JtKpscPd';
 
-const STORAGE_KEY_URL = 'expensee_supabase_url';
-const STORAGE_KEY_KEY = 'expensee_supabase_key';
-const STORAGE_KEY_LOCAL_DATA = 'expensee_local_expenses';
-const STORAGE_KEY_LOCAL_BUDGETS = 'expensee_local_budgets';
-// Expenses that failed to save to the cloud and still need uploading
-const STORAGE_KEY_PENDING = 'expensee_pending_expenses';
+const DEFAULT_PIN = '1234';
+
+// Supabase is the only store for app data. These keys held per-browser copies in
+// older versions; they are removed on load so stale data can never resurface.
+const LEGACY_STORAGE_KEYS = [
+  'expensee_supabase_url',
+  'expensee_supabase_key',
+  'expensee_local_expenses',
+  'expensee_local_budgets',
+  'expensee_pending_expenses',
+  'expensee_legacy_synced',
+  'spendwise_app_pin',
+];
+
+if (typeof window !== 'undefined') {
+  try {
+    LEGACY_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // Storage can be unavailable (private mode); nothing to clean then
+  }
+}
 
 // CLEAN STATE: Zero mock data
 export const INITIAL_DEMO_EXPENSES: ExpenseItem[] = [];
 export const INITIAL_DEMO_BUDGETS: CategoryBudget[] = [];
 
 let cachedClient: SupabaseClient | null = null;
-let currentConfigString = '';
 
-// Last cloud sync failure, surfaced in the UI so local-only fallbacks are never silent
+// Last cloud failure, surfaced in the UI so nothing fails silently
 let lastSyncError: string | null = null;
 
 export function getLastSyncError(): string | null {
@@ -43,20 +57,6 @@ function setSyncError(context: string, message?: string | null) {
 }
 
 export function getActiveSupabaseCredentials(): { url: string; key: string } {
-  if (typeof window !== 'undefined') {
-    const customUrl = localStorage.getItem(STORAGE_KEY_URL)?.trim();
-    const customKey = localStorage.getItem(STORAGE_KEY_KEY)?.trim();
-    if (
-      customUrl &&
-      customKey &&
-      customUrl.startsWith('https://') &&
-      !customUrl.includes('your-project-id') &&
-      !customUrl.startsWith('sb_') &&
-      customKey.length > 20
-    ) {
-      return { url: customUrl, key: customKey };
-    }
-  }
   return {
     url: DEFAULT_SUPABASE_URL,
     key: DEFAULT_SUPABASE_ANON_KEY,
@@ -65,25 +65,13 @@ export function getActiveSupabaseCredentials(): { url: string; key: string } {
 
 export function isSupabaseConfigured(): boolean {
   const { url, key } = getActiveSupabaseCredentials();
-  return Boolean(
-    url && 
-    key && 
-    url.startsWith('https://') && 
-    !url.includes('your-project-id') &&
-    key.length > 20
-  );
+  return Boolean(url && key && url.startsWith('https://') && key.length > 20);
 }
 
 export function getSupabase(): SupabaseClient | null {
+  if (cachedClient) return cachedClient;
   const { url, key } = getActiveSupabaseCredentials();
-  if (!url || !key || !url.startsWith('https://')) {
-    return null;
-  }
-
-  const configString = `${url}:${key}`;
-  if (cachedClient && currentConfigString === configString) {
-    return cachedClient;
-  }
+  if (!isSupabaseConfigured()) return null;
 
   try {
     cachedClient = createClient(url, key, {
@@ -92,7 +80,6 @@ export function getSupabase(): SupabaseClient | null {
         autoRefreshToken: true,
       },
     });
-    currentConfigString = configString;
     return cachedClient;
   } catch (err) {
     console.error('Failed to initialize Supabase client:', err);
@@ -100,25 +87,16 @@ export function getSupabase(): SupabaseClient | null {
   }
 }
 
-export function saveCustomSupabaseConfig(url: string, key: string) {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_URL, url.trim());
-    localStorage.setItem(STORAGE_KEY_KEY, key.trim());
-    cachedClient = null;
-    currentConfigString = '';
+function requireClient(): SupabaseClient {
+  const client = getSupabase();
+  if (!client) {
+    const msg = 'Supabase is not configured';
+    setSyncError('Cloud unavailable', msg);
+    throw new Error(msg);
   }
+  return client;
 }
 
-export function clearCustomSupabaseConfig() {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_KEY_URL);
-    localStorage.removeItem(STORAGE_KEY_KEY);
-    cachedClient = null;
-    currentConfigString = '';
-  }
-}
-
-// ---------------- LOCAL STORAGE FALLBACK HELPERS ----------------
 export function sortExpensesRecentFirst(items: ExpenseItem[]): ExpenseItem[] {
   return [...items].sort((a, b) => {
     // 1. Compare date first (YYYY-MM-DD descending)
@@ -128,135 +106,21 @@ export function sortExpensesRecentFirst(items: ExpenseItem[]): ExpenseItem[] {
     // 2. If same date, newest created_at timestamp first
     const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
     const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
-    if (tA && tB && tA !== tB) {
-      return tB - tA;
-    }
-    if (tA || tB) {
-      return tB - tA;
-    }
-    return 0;
+    return tB - tA;
   });
-}
-
-function getLocalExpenses(): ExpenseItem[] {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem(STORAGE_KEY_LOCAL_DATA);
-  if (!stored) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    if (Array.isArray(parsed)) {
-      const clean = parsed.filter((item: any) => !String(item.id).startsWith('demo-'));
-      return sortExpensesRecentFirst(clean);
-    }
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalExpenses(items: ExpenseItem[]) {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_LOCAL_DATA, JSON.stringify(items));
-  }
-}
-
-function getLocalBudgets(): CategoryBudget[] {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem(STORAGE_KEY_LOCAL_BUDGETS);
-  if (!stored) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalBudgets(budgets: CategoryBudget[]) {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_LOCAL_BUDGETS, JSON.stringify(budgets));
-  }
-}
-
-const isUUID = (str: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-
-function newUUID(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
-
-function getPendingExpenses(): ExpenseItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY_PENDING) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePendingExpenses(items: ExpenseItem[]) {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_PENDING, JSON.stringify(items));
-  }
-}
-
-function toExpenseRow(item: ExpenseItem, user?: User | null) {
-  return {
-    id: item.id,
-    title: item.title,
-    amount: item.amount,
-    type: item.type,
-    category: item.category,
-    date: item.date,
-    payment_method: item.payment_method,
-    payee: item.payee || null,
-    notes: item.notes || null,
-    user_id: item.user_id || user?.id || null,
-  };
 }
 
 // ---------------- CRUD API FOR EXPENSES ----------------
 type FetchExpensesResult = { data: ExpenseItem[]; isSupabase: boolean; error?: string };
 
-let syncRunning: Promise<FetchExpensesResult> | null = null;
-let syncQueued: Promise<FetchExpensesResult> | null = null;
-
-// Mount, month change and realtime events all call this, often at the same time.
-// Overlapping runs would upload the same local items twice, so only one runs at a
-// time; a call made during a run gets one fresh run after it.
-export function fetchExpensesFromDb(user?: User | null): Promise<FetchExpensesResult> {
-  if (!syncRunning) {
-    syncRunning = syncExpenses(user).finally(() => {
-      syncRunning = null;
-    });
-    return syncRunning;
-  }
-  if (!syncQueued) {
-    syncQueued = syncRunning.then(() => {
-      syncQueued = null;
-      return fetchExpensesFromDb(user);
-    });
-  }
-  return syncQueued;
-}
-
-async function syncExpenses(user?: User | null): Promise<FetchExpensesResult> {
+export async function fetchExpensesFromDb(user?: User | null): Promise<FetchExpensesResult> {
   const client = getSupabase();
-  if (!client || !isSupabaseConfigured()) {
-    setSyncError('Supabase not configured', `invalid URL "${getActiveSupabaseCredentials().url.slice(0, 20)}"`);
-    return { data: getLocalExpenses(), isSupabase: false, error: lastSyncError ?? undefined };
+  if (!client) {
+    setSyncError('Cloud unavailable', 'Supabase is not configured');
+    return { data: [], isSupabase: false, error: lastSyncError ?? undefined };
   }
 
-  const selectAll = () => {
+  try {
     let query = client
       .from('expenses')
       .select('*')
@@ -265,337 +129,180 @@ async function syncExpenses(user?: User | null): Promise<FetchExpensesResult> {
     if (user?.id) {
       query = query.or(`user_id.eq.${user.id},user_id.is.null`);
     }
-    return query;
-  };
 
-  try {
-    const { data, error } = await selectAll();
+    const { data, error } = await query;
     if (error) {
-      setSyncError('Fetch failed', error.message);
-      return { data: getLocalExpenses(), isSupabase: false, error: error.message };
+      setSyncError('Could not load transactions', error.message);
+      return { data: [], isSupabase: false, error: error.message };
     }
 
-    let supabaseExpenses = sortExpensesRecentFirst((data as ExpenseItem[]) || []);
-    const cloudIds = new Set(supabaseExpenses.map((e) => e.id));
-
-    // The cloud is the source of truth. Upload only items that explicitly failed to
-    // save; never diff the local cache, which may hold stale or deleted entries.
-    const toUpload = getPendingExpenses().filter((p) => !cloudIds.has(p.id));
-
-    if (toUpload.length > 0) {
-      // Stable UUIDs make the upload idempotent: re-sending an item can never duplicate it
-      const rows = toUpload.map((item) => toExpenseRow({ ...item, id: isUUID(item.id) ? item.id : newUUID() }, user));
-      const upload = (batch: typeof rows) =>
-        client.from('expenses').upsert(batch, { onConflict: 'id', ignoreDuplicates: true });
-
-      const failed: ExpenseItem[] = [];
-      let lastError: string | null = null;
-      const { error: batchErr } = await upload(rows);
-      if (batchErr) {
-        // One bad row fails the whole statement; retry individually so the rest get through
-        for (const row of rows) {
-          const { error: rowErr } = await upload([row]);
-          if (rowErr) {
-            failed.push(row as ExpenseItem);
-            lastError = rowErr.message;
-          }
-        }
-      }
-
-      savePendingExpenses(failed);
-      if (failed.length > 0) {
-        setSyncError(`Upload of ${failed.length} local item(s) failed`, lastError);
-      }
-
-      const { data: refreshed, error: refreshErr } = await selectAll();
-      if (refreshErr) {
-        setSyncError('Fetch failed', refreshErr.message);
-        return { data: getLocalExpenses(), isSupabase: false, error: refreshErr.message };
-      }
-      supabaseExpenses = (refreshed as ExpenseItem[]) || [];
-    }
-
-    // Keep local cache synced with Supabase for fast load and offline resilience
-    saveLocalExpenses(supabaseExpenses);
-    if (getPendingExpenses().length === 0) {
-      lastSyncError = null;
-      return { data: supabaseExpenses, isSupabase: true };
-    }
-    return { data: supabaseExpenses, isSupabase: true, error: lastSyncError ?? undefined };
+    lastSyncError = null;
+    return { data: sortExpensesRecentFirst((data as ExpenseItem[]) || []), isSupabase: true };
   } catch (err: any) {
-    setSyncError('Fetch failed', err?.message);
-    return { data: getLocalExpenses(), isSupabase: false, error: err?.message };
+    setSyncError('Could not load transactions', err?.message);
+    return { data: [], isSupabase: false, error: err?.message };
   }
 }
 
+// Throws if the cloud save fails, so the caller can tell the user instead of
+// pretending the entry was saved
 export async function addExpenseToDb(item: Omit<ExpenseItem, 'id'>, user?: User | null): Promise<ExpenseItem> {
-  const client = getSupabase();
-  const newItem: ExpenseItem = {
-    ...item,
-    id: newUUID(),
-    payee: item.payee || null,
-    user_id: user?.id || null,
-  };
+  const client = requireClient();
+  const { data, error } = await client
+    .from('expenses')
+    .insert([{
+      title: item.title,
+      amount: item.amount,
+      type: item.type,
+      category: item.category,
+      date: item.date,
+      payment_method: item.payment_method,
+      payee: item.payee || null,
+      notes: item.notes || null,
+      user_id: user?.id || null,
+    }])
+    .select()
+    .single();
 
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { data, error } = await client
-        .from('expenses')
-        .insert([toExpenseRow(newItem, user)])
-        .select()
-        .single();
-
-      if (!error && data) {
-        const saved = data as ExpenseItem;
-        const current = getLocalExpenses();
-        saveLocalExpenses([saved, ...current.filter((x) => x.id !== saved.id)]);
-        return saved;
-      }
-      setSyncError('Save failed (kept on this device only)', error?.message);
-    } catch (e: any) {
-      setSyncError('Save failed (kept on this device only)', e?.message);
-    }
+  if (error || !data) {
+    setSyncError('Save failed', error?.message);
+    throw new Error(error?.message || 'Save failed');
   }
-
-  // Fallback to local storage, queued for upload on the next successful sync
-  saveLocalExpenses([newItem, ...getLocalExpenses()]);
-  savePendingExpenses([newItem, ...getPendingExpenses()]);
-  return newItem;
+  return data as ExpenseItem;
 }
 
 export async function updateExpenseInDb(id: string, updates: Partial<ExpenseItem>): Promise<boolean> {
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { error } = await client
-        .from('expenses')
-        .update(updates)
-        .eq('id', id);
-
-      if (!error) {
-        const current = getLocalExpenses();
-        const index = current.findIndex((item) => item.id === id);
-        if (index !== -1) {
-          current[index] = { ...current[index], ...updates };
-          saveLocalExpenses(current);
-        }
-        return true;
-      }
-    } catch (e) {
-      console.warn('Supabase error updating:', e);
-    }
+  if (!client) return false;
+  const { error } = await client.from('expenses').update(updates).eq('id', id);
+  if (error) {
+    setSyncError('Update failed', error.message);
+    return false;
   }
-
-  savePendingExpenses(getPendingExpenses().map((item) => (item.id === id ? { ...item, ...updates } : item)));
-  const current = getLocalExpenses();
-  const index = current.findIndex((item) => item.id === id);
-  if (index !== -1) {
-    current[index] = { ...current[index], ...updates };
-    saveLocalExpenses(current);
-    return true;
-  }
-  return false;
+  return true;
 }
 
 export async function deleteExpenseFromDb(id: string): Promise<boolean> {
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { error } = await client
-        .from('expenses')
-        .delete()
-        .eq('id', id);
-
-      if (!error) {
-        const current = getLocalExpenses();
-        saveLocalExpenses(current.filter((item) => item.id !== id));
-        return true;
-      }
-    } catch (e) {
-      console.warn('Supabase error deleting:', e);
+  if (!client) return false;
+  try {
+    const { error } = await client.from('expenses').delete().eq('id', id);
+    if (error) {
+      setSyncError('Delete failed', error.message);
+      return false;
     }
+    return true;
+  } catch (e: any) {
+    setSyncError('Delete failed', e?.message);
+    return false;
   }
-
-  savePendingExpenses(getPendingExpenses().filter((item) => item.id !== id));
-  const current = getLocalExpenses();
-  const filtered = current.filter((item) => item.id !== id);
-  saveLocalExpenses(filtered);
-  return true;
 }
 
 // ---------------- CRUD API FOR BUDGETS ----------------
 export async function fetchBudgetsFromDb(month: string, user?: User | null): Promise<CategoryBudget[]> {
   const client = getSupabase();
-  if (!client || !isSupabaseConfigured()) {
-    const local = getLocalBudgets();
-    return local.filter((b) => b.month === month);
-  }
+  if (!client) return [];
 
   try {
     let query = client
       .from('budgets')
       .select('*')
       .eq('month', month);
-
     if (user?.id) {
       query = query.or(`user_id.eq.${user.id},user_id.is.null`);
     }
 
     const { data, error } = await query;
     if (error) {
-      console.warn('Error fetching budgets from Supabase:', error.message);
-      const local = getLocalBudgets();
-      return local.filter((b) => b.month === month);
+      setSyncError('Could not load budgets', error.message);
+      return [];
     }
-
-    let supabaseBudgets = (data as CategoryBudget[]) || [];
-    const local = getLocalBudgets();
-    const localMonthBudgets = local.filter((b) => b.month === month);
-    if (localMonthBudgets.length > 0) {
-      const unsynced = localMonthBudgets.filter(
-        (loc) => !supabaseBudgets.some((sub) => sub.category === loc.category && sub.month === loc.month)
-      );
-      if (unsynced.length > 0) {
-        for (const item of unsynced) {
-          await upsertBudgetInDb(item, user);
-        }
-        const { data: refreshed } = await query;
-        if (refreshed) supabaseBudgets = refreshed as CategoryBudget[];
-      }
-    }
-
-    saveLocalBudgets(supabaseBudgets);
-    return supabaseBudgets;
-  } catch (err) {
-    console.warn('Supabase budgets query error:', err);
-    const local = getLocalBudgets();
-    return local.filter((b) => b.month === month);
+    return (data as CategoryBudget[]) || [];
+  } catch (err: any) {
+    setSyncError('Could not load budgets', err?.message);
+    return [];
   }
 }
 
+// Throws if the cloud save fails
 export async function upsertBudgetInDb(budget: CategoryBudget, user?: User | null): Promise<CategoryBudget> {
-  const client = getSupabase();
-  const toSave: CategoryBudget = {
-    ...budget,
-    user_id: user?.id || null,
-  };
+  const client = requireClient();
 
-  if (client && isSupabaseConfigured()) {
-    try {
-      // Postgres treats NULL user_ids as distinct, so the (user_id, category, month)
-      // unique constraint never fires for signed-out use and an upsert would insert
-      // a duplicate. Update the existing row(s) explicitly, insert only if none.
-      let update = client
-        .from('budgets')
-        .update({ monthly_limit: budget.monthly_limit })
-        .eq('category', budget.category)
-        .eq('month', budget.month);
-      update = user?.id ? update.eq('user_id', user.id) : update.is('user_id', null);
-      const { data: updated, error: updateErr } = await update.select();
+  // Postgres treats NULL user_ids as distinct, so the (user_id, category, month)
+  // unique constraint never fires for signed-out use and an upsert would insert
+  // a duplicate. Update the existing row(s) explicitly, insert only if none.
+  let update = client
+    .from('budgets')
+    .update({ monthly_limit: budget.monthly_limit })
+    .eq('category', budget.category)
+    .eq('month', budget.month);
+  update = user?.id ? update.eq('user_id', user.id) : update.is('user_id', null);
+  const { data: updated, error: updateErr } = await update.select();
 
-      const { data, error } = updateErr
-        ? { data: null, error: updateErr }
-        : updated && updated.length > 0
-          ? { data: updated[updated.length - 1], error: null }
-          : await client
-              .from('budgets')
-              .insert([{
-                category: budget.category,
-                monthly_limit: budget.monthly_limit,
-                month: budget.month,
-                user_id: user?.id || null,
-              }])
-              .select()
-              .single();
+  const { data, error } = updateErr
+    ? { data: null, error: updateErr }
+    : updated && updated.length > 0
+      ? { data: updated[updated.length - 1], error: null }
+      : await client
+          .from('budgets')
+          .insert([{
+            category: budget.category,
+            monthly_limit: budget.monthly_limit,
+            month: budget.month,
+            user_id: user?.id || null,
+          }])
+          .select()
+          .single();
 
-      if (!error && data) {
-        const saved = data as CategoryBudget;
-        const current = getLocalBudgets();
-        const idx = current.findIndex(
-          (b) => b.category === saved.category && b.month === saved.month
-        );
-        if (idx >= 0) current[idx] = saved;
-        else current.push(saved);
-        saveLocalBudgets(current);
-        return saved;
-      }
-      setSyncError('Budget save failed', error?.message);
-    } catch (err: any) {
-      setSyncError('Budget save failed', err?.message);
-    }
+  if (error || !data) {
+    setSyncError('Budget save failed', error?.message);
+    throw new Error(error?.message || 'Budget save failed');
   }
-
-  // Fallback to local storage
-  const current = getLocalBudgets();
-  const idx = current.findIndex(
-    (b) => b.category === budget.category && b.month === budget.month
-  );
-  if (idx >= 0) {
-    current[idx] = toSave;
-  } else {
-    current.push(toSave);
-  }
-  saveLocalBudgets(current);
-  return toSave;
+  return data as CategoryBudget;
 }
 
 export async function deleteBudgetFromDb(budget: CategoryBudget): Promise<boolean> {
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      // Delete by category + month so older duplicate rows go too
-      const { error } = await client
-        .from('budgets')
-        .delete()
-        .eq('category', budget.category)
-        .eq('month', budget.month);
-      if (error) {
-        setSyncError('Budget delete failed', error.message);
-        return false;
-      }
-    } catch (e: any) {
-      setSyncError('Budget delete failed', e?.message);
+  if (!client) return false;
+  try {
+    // Delete by category + month so older duplicate rows go too
+    const { error } = await client
+      .from('budgets')
+      .delete()
+      .eq('category', budget.category)
+      .eq('month', budget.month);
+    if (error) {
+      setSyncError('Budget delete failed', error.message);
       return false;
     }
+    return true;
+  } catch (e: any) {
+    setSyncError('Budget delete failed', e?.message);
+    return false;
   }
-
-  saveLocalBudgets(
-    getLocalBudgets().filter((b) => !(b.category === budget.category && b.month === budget.month))
-  );
-  return true;
 }
 
 export async function clearAllData(): Promise<void> {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_KEY_LOCAL_DATA);
-    localStorage.removeItem(STORAGE_KEY_LOCAL_BUDGETS);
-    localStorage.setItem(STORAGE_KEY_LOCAL_DATA, '[]');
-    localStorage.setItem(STORAGE_KEY_LOCAL_BUDGETS, '[]');
-    localStorage.removeItem(STORAGE_KEY_PENDING);
-  }
-
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      await client.from('expenses').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    } catch (e) {
-      console.warn('Could not clear Supabase expenses:', e);
-    }
-    try {
-      await client.from('budgets').delete().neq('category', '__APP_PIN__');
-    } catch (e) {
-      console.warn('Could not clear Supabase budgets:', e);
-    }
+  if (!client) return;
+  try {
+    await client.from('expenses').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  } catch (e) {
+    console.warn('Could not clear Supabase expenses:', e);
+  }
+  try {
+    await client.from('budgets').delete().neq('category', '__APP_PIN__');
+  } catch (e) {
+    console.warn('Could not clear Supabase budgets:', e);
   }
 }
 
 // ---------------- CLOUD APP CONFIG / PIN API ----------------
-export async function fetchAppPinFromDb(): Promise<string> {
-  const localPin = typeof window !== 'undefined' ? localStorage.getItem('spendwise_app_pin') || '1234' : '1234';
+// Returns the cloud PIN (DEFAULT_PIN when none has been set yet), or null when the
+// cloud can't be reached, so the lock screen never guesses a PIN
+export async function fetchAppPinFromDb(): Promise<string | null> {
   const client = getSupabase();
-  if (!client || !isSupabaseConfigured()) {
-    return localPin;
-  }
+  if (!client) return null;
 
   try {
     const { data, error } = await client
@@ -607,28 +314,21 @@ export async function fetchAppPinFromDb(): Promise<string> {
 
     if (error) {
       setSyncError('PIN fetch failed', error.message);
-    } else if (data && data.length > 0) {
-      const pinNum = Math.floor(Number(data[0].monthly_limit));
-      const pinVal = String(pinNum).padStart(4, '0');
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('spendwise_app_pin', pinVal);
-      }
-      return pinVal;
+      return null;
     }
-  } catch (e) {
-    console.warn('Could not fetch PIN from Supabase:', e);
+    if (data && data.length > 0) {
+      return String(Math.floor(Number(data[0].monthly_limit))).padStart(4, '0');
+    }
+    return DEFAULT_PIN;
+  } catch (e: any) {
+    setSyncError('PIN fetch failed', e?.message);
+    return null;
   }
-  return localPin;
 }
 
 export async function saveAppPinToDb(newPin: string): Promise<boolean> {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('spendwise_app_pin', newPin);
-  }
   const client = getSupabase();
-  if (!client || !isSupabaseConfigured()) {
-    return true;
-  }
+  if (!client) return false;
 
   try {
     const pinNum = parseInt(newPin, 10);
@@ -663,9 +363,8 @@ export async function saveAppPinToDb(newPin: string): Promise<boolean> {
       return false;
     }
     return true;
-  } catch (e) {
-    console.warn('Could not save PIN to Supabase:', e);
+  } catch (e: any) {
+    setSyncError('PIN save failed', e?.message);
     return false;
   }
 }
-

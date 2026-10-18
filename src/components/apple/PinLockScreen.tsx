@@ -2,22 +2,25 @@
 
 import React, { useState, useEffect } from 'react';
 import { Lock, Delete, KeyRound, ShieldAlert, Check, X } from 'lucide-react';
-import { fetchAppPinFromDb, saveAppPinToDb } from '@/lib/supabaseClient';
 
 interface PinLockScreenProps {
   onUnlock: () => void;
-  savedPin: string;
+  /** null while the PIN is still loading from the cloud */
+  savedPin: string | null;
+  pinLoadFailed?: boolean;
+  onRetryPin?: () => void;
   theme?: 'dark' | 'light';
-  onPinChanged?: (newPin: string) => void;
+  onPinChanged?: (newPin: string) => Promise<boolean>;
 }
 
 export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   onUnlock,
   savedPin,
+  pinLoadFailed = false,
+  onRetryPin,
   theme = 'light',
   onPinChanged,
 }) => {
-  const [activePin, setActivePin] = useState(savedPin);
   const [enteredPin, setEnteredPin] = useState('');
   const [isError, setIsError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -30,31 +33,15 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
 
   const isDark = theme === 'dark';
 
-  useEffect(() => {
-    setActivePin(savedPin);
-  }, [savedPin]);
-
-  // Sync latest PIN directly from Supabase cloud on load
-  useEffect(() => {
-    fetchAppPinFromDb().then((cloudPin) => {
-      if (cloudPin) {
-        setActivePin(cloudPin);
-        if (onPinChanged && cloudPin !== savedPin) {
-          onPinChanged(cloudPin);
-        }
-      }
-    });
-  }, []);
-
   const handleDigit = (digit: string) => {
-    if (enteredPin.length >= 4) return;
+    if (!savedPin || enteredPin.length >= 4) return;
     const newPin = enteredPin + digit;
     setEnteredPin(newPin);
     setIsError(false);
     setErrorMessage('');
 
     if (newPin.length === 4) {
-      if (newPin === activePin || newPin === savedPin) {
+      if (newPin === savedPin) {
         setTimeout(() => {
           onUnlock();
         }, 150);
@@ -82,15 +69,8 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
     // Check master recovery password "momdad143"
     if (recoveryPassword.trim().toLowerCase() === 'momdad143') {
       setRecoverySuccess(true);
-      // Reset PIN to 1234 in cloud and local
-      saveAppPinToDb('1234');
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('spendwise_app_pin', '1234');
-      }
-      setActivePin('1234');
-      if (onPinChanged) {
-        onPinChanged('1234');
-      }
+      // Reset PIN to 1234 in the cloud
+      onPinChanged?.('1234');
 
       setTimeout(() => {
         setShowRecoveryModal(false);
@@ -162,7 +142,14 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
 
         {/* Error or Hint Message */}
         <div className="h-6 mt-3">
-          {errorMessage ? (
+          {pinLoadFailed ? (
+            <p className="text-xs font-semibold text-rose-500">
+              Can&apos;t reach the cloud.{' '}
+              <button onClick={onRetryPin} className="underline">Retry</button>
+            </p>
+          ) : !savedPin ? (
+            <p className="text-[11px] text-slate-400 font-medium">Connecting…</p>
+          ) : errorMessage ? (
             <p className="text-xs font-semibold text-rose-500 animate-in fade-in">
               {errorMessage}
             </p>
