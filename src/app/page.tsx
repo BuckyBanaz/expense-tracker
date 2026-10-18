@@ -38,6 +38,7 @@ import {
   getLastSyncError,
   clearAllData,
   fetchAppPinFromDb,
+  fetchCustomCategoriesFromDb,
   saveAppPinToDb,
 } from '@/lib/supabaseClient';
 import { ExpenseItem, CategoryBudget } from '@/types/expense';
@@ -82,10 +83,13 @@ export default function Home() {
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isCreateCategoryModalOpen, setIsCreateCategoryModalOpen] = useState(false);
+  // Bumped when the cloud category cache changes so views re-read getAllCategories()
+  const [, setCategoriesVersion] = useState(0);
 
   useEffect(() => {
     setCurrentMonth(new Date().toISOString().slice(0, 7));
     loadPin();
+    fetchCustomCategoriesFromDb().then(() => setCategoriesVersion((v) => v + 1));
   }, [loadPin]);
 
   // Sync theme
@@ -531,6 +535,7 @@ export default function Home() {
         isOpen={isCreateCategoryModalOpen}
         onClose={() => setIsCreateCategoryModalOpen(false)}
         onCategoryCreated={() => {
+          setCategoriesVersion((v) => v + 1);
           setIsCreateCategoryModalOpen(false);
         }}
         theme={theme}

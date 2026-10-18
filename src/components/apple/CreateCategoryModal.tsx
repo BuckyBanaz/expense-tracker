@@ -3,7 +3,8 @@
 import React, { useState } from 'react';
 import { X, Sparkles, Check, Plus } from 'lucide-react';
 import { CategoryMeta } from '@/types/expense';
-import { AVAILABLE_ICONS, COLOR_PRESETS, saveCustomCategory } from '@/lib/currencies';
+import { AVAILABLE_ICONS, COLOR_PRESETS } from '@/lib/currencies';
+import { saveCustomCategoryToDb } from '@/lib/supabaseClient';
 import { CategoryIcon } from './CategoryIcon';
 import confetti from 'canvas-confetti';
 
@@ -30,10 +31,14 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Please enter a category name');
+      return;
+    }
+    if (name.trim().length > 50) {
+      setError('Name must be 50 characters or fewer');
       return;
     }
 
@@ -45,7 +50,13 @@ export const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
       type,
     };
 
-    saveCustomCategory(newCat);
+    try {
+      await saveCustomCategoryToDb(newCat);
+    } catch {
+      setError('Could not save to the cloud. Check your connection and try again.');
+      return;
+    }
+    setError('');
     onCategoryCreated(newCat);
 
     try {

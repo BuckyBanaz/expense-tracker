@@ -76,42 +76,18 @@ export const PAYMENT_METHODS = [
   'Credit Card',
 ];
 
-export function getAllCategories(): CategoryMeta[] {
-  if (typeof window === 'undefined') return DEFAULT_CATEGORIES;
-  try {
-    const stored = localStorage.getItem('spendwise_custom_categories');
-    if (stored) {
-      const parsed: CategoryMeta[] = JSON.parse(stored);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        // Merge without duplicates
-        const existingNames = new Set(DEFAULT_CATEGORIES.map((c) => c.name.toLowerCase()));
-        const customUnique = parsed.filter((c) => !existingNames.has(c.name.toLowerCase()));
-        return [...DEFAULT_CATEGORIES, ...customUnique];
-      }
-    }
-  } catch (e) {}
-  return DEFAULT_CATEGORIES;
+// Custom categories loaded from Supabase (see fetchCustomCategoriesFromDb)
+let customCategories: CategoryMeta[] = [];
+
+export function setCustomCategories(list: CategoryMeta[]) {
+  customCategories = list;
 }
 
-export function saveCustomCategory(newCategory: CategoryMeta) {
-  if (typeof window === 'undefined') return;
-  try {
-    const stored = localStorage.getItem('spendwise_custom_categories');
-    let list: CategoryMeta[] = [];
-    if (stored) {
-      list = JSON.parse(stored);
-    }
-    // Check if exists, replace or add
-    const idx = list.findIndex((c) => c.name.toLowerCase() === newCategory.name.toLowerCase());
-    if (idx >= 0) {
-      list[idx] = newCategory;
-    } else {
-      list.push(newCategory);
-    }
-    localStorage.setItem('spendwise_custom_categories', JSON.stringify(list));
-  } catch (e) {
-    console.error('Failed to save custom category:', e);
-  }
+export function getAllCategories(): CategoryMeta[] {
+  // Merge without duplicates
+  const existingNames = new Set(DEFAULT_CATEGORIES.map((c) => c.name.toLowerCase()));
+  const customUnique = customCategories.filter((c) => !existingNames.has(c.name.toLowerCase()));
+  return [...DEFAULT_CATEGORIES, ...customUnique];
 }
 
 export function formatCurrency(amount: number, _currency?: string): string {

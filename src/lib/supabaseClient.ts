@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
-import { ExpenseItem, CategoryBudget } from '@/types/expense';
+import { ExpenseItem, CategoryBudget, CategoryMeta } from '@/types/expense';
+import { setCustomCategories } from '@/lib/currencies';
 
 const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const DEFAULT_SUPABASE_URL =
@@ -295,6 +296,105 @@ export async function clearAllData(): Promise<void> {
   } catch (e) {
     console.warn('Could not clear Supabase budgets:', e);
   }
+}
+
+// ---------------- CUSTOM CATEGORIES ----------------
+// Custom categories used to live only in this browser's localStorage
+const LEGACY_CATEGORIES_KEY = 'spendwise_custom_categories';
+
+function readLegacyCategories(): CategoryMeta[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEGACY_CATEGORIES_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function toCategoryMeta(row: any): CategoryMeta {
+  return {
+    name: row.name,
+    color: row.color,
+    bgLight: `${row.color}1f`,
+    icon: row.icon,
+    type: row.type,
+  };
+}
+
+async function writeCategory(client: SupabaseClient, category: CategoryMeta) {
+  const fields = { color: category.color, icon: category.icon, type: category.type };
+  const { data: updated, error: updateErr } = await client
+    .from('categories')
+    .update(fields)
+    .ilike('name', category.name.replace(/[\\%_]/g, '\\$&'))
+    .is('user_id', null)
+    .select();
+  if (updateErr) return updateErr;
+  if (updated && updated.length > 0) return null;
+  const { error } = await client
+    .from('categories')
+    .insert([{ name: category.name, ...fields, user_id: null }]);
+  return error;
+}
+
+// Loads custom categories into the shared cache read by getAllCategories().
+// Categories still sitting in this browser's localStorage are uploaded once.
+export async function fetchCustomCategoriesFromDb(): Promise<CategoryMeta[]> {
+  const client = getSupabase();
+  const legacy = readLegacyCategories();
+  if (!client) {
+    setCustomCategories(legacy);
+    return legacy;
+  }
+
+  try {
+    const { data, error } = await client
+      .from('categories')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (error) {
+      // Table not created yet: keep showing this browser's old categories until it is
+      setSyncError('Could not load categories', error.message);
+      setCustomCategories(legacy);
+      return legacy;
+    }
+
+    let cloud = (data || []).map(toCategoryMeta);
+    const cloudNames = new Set(cloud.map((c) => c.name.toLowerCase()));
+    const toUpload = legacy.filter((c) => c?.name && !cloudNames.has(c.name.toLowerCase()));
+    let uploadFailed = false;
+    for (const cat of toUpload) {
+      const err = await writeCategory(client, cat);
+      if (err) {
+        uploadFailed = true;
+        setSyncError('Category upload failed', err.message);
+      } else {
+        cloud = [...cloud, cat];
+      }
+    }
+    if (!uploadFailed && legacy.length > 0 && typeof window !== 'undefined') {
+      localStorage.removeItem(LEGACY_CATEGORIES_KEY);
+    }
+
+    setCustomCategories(cloud);
+    return cloud;
+  } catch (e: any) {
+    setSyncError('Could not load categories', e?.message);
+    setCustomCategories(legacy);
+    return legacy;
+  }
+}
+
+// Throws if the cloud save fails
+export async function saveCustomCategoryToDb(category: CategoryMeta): Promise<void> {
+  const client = requireClient();
+  const error = await writeCategory(client, category);
+  if (error) {
+    setSyncError('Category save failed', error.message);
+    throw new Error(error.message);
+  }
+  await fetchCustomCategoriesFromDb();
 }
 
 // ---------------- CLOUD APP CONFIG / PIN API ----------------
