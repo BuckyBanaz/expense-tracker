@@ -200,9 +200,10 @@ export async function deleteExpenseFromDb(id: string): Promise<boolean> {
 }
 
 // ---------------- CRUD API FOR BUDGETS ----------------
-export async function fetchBudgetsFromDb(month: string, user?: User | null): Promise<CategoryBudget[]> {
+// Returns null when the cloud can't be reached, so callers keep what they show
+export async function fetchBudgetsFromDb(month: string, user?: User | null): Promise<CategoryBudget[] | null> {
   const client = getSupabase();
-  if (!client) return [];
+  if (!client) return null;
 
   try {
     let query = client
@@ -216,12 +217,12 @@ export async function fetchBudgetsFromDb(month: string, user?: User | null): Pro
     const { data, error } = await query;
     if (error) {
       setSyncError('Could not load budgets', error.message);
-      return [];
+      return null;
     }
     return (data as CategoryBudget[]) || [];
   } catch (err: any) {
     setSyncError('Could not load budgets', err?.message);
-    return [];
+    return null;
   }
 }
 

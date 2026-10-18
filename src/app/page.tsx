@@ -120,14 +120,15 @@ export default function Home() {
   const loadData = useCallback(async () => {
     try {
       const expResult = await fetchExpensesFromDb(user);
-      setExpenses(expResult.data || []);
+      // On a failed fetch keep what's on screen instead of blanking it
+      if (expResult.isSupabase) setExpenses(expResult.data);
       // Only report "Connected" when data actually came from the cloud
       setIsSupabaseLive(expResult.isSupabase && !expResult.error);
       setSyncError(getLastSyncError());
 
       const m = currentMonth || new Date().toISOString().slice(0, 7);
       const budgetsData = await fetchBudgetsFromDb(m, user);
-      setBudgets(budgetsData || []);
+      if (budgetsData) setBudgets(budgetsData);
     } catch (e) {
       console.error('Error loading data:', e);
     }
@@ -150,7 +151,7 @@ export default function Home() {
           { event: '*', schema: 'public', table: 'expenses' },
           () => {
             fetchExpensesFromDb(user).then((res) => {
-              if (res.data) setExpenses(res.data);
+              if (res.isSupabase) setExpenses(res.data);
             });
           }
         )
@@ -161,6 +162,25 @@ export default function Home() {
       };
     }
   }, [loadData, user]);
+
+  // Realtime alone isn't enough: phones suspend background tabs and drop the
+  // socket, so a tab reopened later would show stale data. Refetch whenever the
+  // app comes back into view or online, and poll while it's visible.
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') loadData();
+    };
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    window.addEventListener('focus', refreshIfVisible);
+    window.addEventListener('online', refreshIfVisible);
+    const timer = setInterval(refreshIfVisible, 30000);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+      window.removeEventListener('focus', refreshIfVisible);
+      window.removeEventListener('online', refreshIfVisible);
+      clearInterval(timer);
+    };
+  }, [loadData]);
 
   // Save Transaction
   const handleSaveTransaction = async (data: Omit<ExpenseItem, 'id'>) => {
